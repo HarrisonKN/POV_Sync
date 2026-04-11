@@ -311,7 +311,7 @@ router.patch('/:id/streams/:streamId/offset', requireAuth, async (req, res) => {
   }
 });
 
-// POST /api/sessions/:id/leave — Participant leaves a session (removes their stream)
+// POST /api/sessions/:id/leave — Participant leaves a session (archives their stream)
 router.post('/:id/leave', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
@@ -337,19 +337,22 @@ router.post('/:id/leave', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'The anchor/host cannot leave. End the session instead.' });
     }
 
-    // Delete the stream using the authenticated client (RLS)
+    // Soft-archive the stream so the VOD keeps the participant's POV history.
     const db = req.supabase;
-    const { error: deleteError } = await db
+    const { error: archiveError } = await db
       .from('streams')
-      .delete()
+      .update({
+        is_active: false,
+        left_at: new Date().toISOString(),
+      })
       .eq('id', stream.id);
 
-    if (deleteError) throw deleteError;
+    if (archiveError) throw archiveError;
 
     // Remove from sync manager
     syncManager.removeStream(id, stream.id);
 
-    res.json({ success: true, removedStreamId: stream.id });
+    res.json({ success: true, archivedStreamId: stream.id });
   } catch (err) {
     console.error('Error leaving session:', err);
     res.status(500).json({ error: err.message || 'Failed to leave session' });
@@ -404,7 +407,11 @@ router.post('/:id/end', requireAuth, async (req, res) => {
     const db = req.supabase;
     const { error: updateError } = await db
       .from('sessions')
-      .update({ status: 'ended', ended_at: new Date().toISOString() })
+      .update({
+        status: 'ended',
+        ended_at: new Date().toISOString(),
+        vod_ready_at: new Date().toISOString(),
+      })
       .eq('id', id);
 
     if (updateError) throw updateError;

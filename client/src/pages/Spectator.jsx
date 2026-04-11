@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import YouTubePlayer from '../components/YouTubePlayer';
 import StatusIndicators from '../components/StatusIndicators';
 import ErrorState from '../components/ErrorState';
+import SessionRoomHeader from '../components/SessionRoomHeader';
 
 export default function Spectator() {
   const { code } = useParams();
@@ -14,6 +15,13 @@ export default function Spectator() {
   const [error, setError] = useState(null);
   // Saved offsets from DB — applied on VOD load
   const [offsets, setOffsets] = useState({});
+  const visibleStreams = useMemo(() => (
+    session?.status === 'ended'
+      ? streams
+      : streams.filter((s) => s.is_active !== false)
+  ), [session?.status, streams]);
+  const hostStream = visibleStreams.find((s) => s.user_id === session?.host_id);
+  const hostName = hostStream?.display_name ?? hostStream?.users?.display_name ?? 'Host';
 
   // Player refs and sync state (same pattern as Viewer)
   const playerRefs = useRef({});
@@ -97,11 +105,11 @@ export default function Spectator() {
 
   // Auto-select first stream when they arrive
   useEffect(() => {
-    if (!mainStreamId && streams.length > 0) {
-      const anchor = streams.find((s) => s.is_anchor);
-      setMainStreamId(anchor?.id || streams[0]?.id);
+    if (!mainStreamId && visibleStreams.length > 0) {
+      const anchor = visibleStreams.find((s) => s.is_anchor);
+      setMainStreamId(anchor?.id || visibleStreams[0]?.id);
     }
-  }, [streams, mainStreamId]);
+  }, [visibleStreams, mainStreamId]);
 
   if (loading) {
     return (
@@ -124,7 +132,7 @@ export default function Spectator() {
 
   // Keep a ref to streams so callbacks stay stable
   const streamsRef = useRef(streams);
-  useEffect(() => { streamsRef.current = streams; }, [streams]);
+  useEffect(() => { streamsRef.current = visibleStreams; }, [visibleStreams]);
 
   const offsetsRef = useRef(offsets);
   useEffect(() => { offsetsRef.current = offsets; }, [offsets]);
@@ -192,6 +200,18 @@ export default function Spectator() {
 
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4">
+      <SessionRoomHeader
+        title="Shared spectator room"
+        session={session}
+        hostLabel={hostName}
+        roleLabel="Read-only view"
+        roleTone="spectator"
+        statusLabel={session?.status === 'live' ? 'Live session' : 'VOD session'}
+        statusTone={session?.status === 'live' ? 'live' : 'vod'}
+        secondaryLabel={session?.status === 'live' ? 'Watching the same live room as participants' : 'Watching the saved VOD session'}
+        className="mb-3 sm:mb-4"
+      />
+
       {/* Spectator header */}
       <div className="flex items-center gap-2 mb-3 sm:mb-4">
         <span className="text-[10px] sm:text-xs font-mono bg-pov-surface border border-pov-border rounded px-2 py-1 text-pov-muted">
@@ -207,14 +227,14 @@ export default function Spectator() {
           {session?.status === 'live' ? '● LIVE' : '📼 VOD'}
         </span>
         <span className="text-xs text-pov-muted font-mono">
-          {streams.length} stream{streams.length !== 1 ? 's' : ''}
+          {visibleStreams.length} stream{visibleStreams.length !== 1 ? 's' : ''}
         </span>
       </div>
 
       {/* Main Stage — all players stacked, only selected visible */}
       <div className="aspect-video bg-black border border-pov-border rounded-lg mb-2 sm:mb-3 overflow-hidden relative">
-        {streams.length > 0 ? (
-          streams.map((stream) => (
+        {visibleStreams.length > 0 ? (
+          visibleStreams.map((stream) => (
             <div
               key={`stage-${stream.id}`}
               className={`absolute inset-0 transition-opacity duration-200 ${
@@ -261,8 +281,8 @@ export default function Spectator() {
 
       {/* Filmstrip — live mini-players, click to swap */}
       <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-2 sm:overflow-x-auto pb-2">
-        {streams.length > 0 ? (
-          streams.map((stream) => {
+        {visibleStreams.length > 0 ? (
+          visibleStreams.map((stream) => {
             const isActive = stream.id === mainStreamId;
             return (
               <button

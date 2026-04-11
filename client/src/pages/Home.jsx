@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { useActiveSession } from '../hooks/useActiveSession';
 import { supabase } from '../lib/supabase';
+import SessionResumeCard from '../components/SessionResumeCard';
 
 /* ── helpers ────────────────────────────────────────────────── */
 
@@ -34,6 +36,7 @@ function duration(start, end) {
 
 export default function Home() {
   const { user, profile, signInWithGoogle, getAccessToken } = useAuth();
+  const { activeSession } = useActiveSession();
   const navigate = useNavigate();
 
   // Panel toggles
@@ -68,7 +71,7 @@ export default function Home() {
 
         const { data: hosted } = await supabase
           .from('sessions')
-          .select('id, status, created_at, ended_at, host_id, streams(id, display_name, user_id, youtube_url, users(avatar_url, display_name))')
+          .select('id, status, created_at, ended_at, host_id, streams(id, display_name, user_id, youtube_url, is_active, left_at, users(avatar_url, display_name))')
           .eq('host_id', user.id)
           .order('created_at', { ascending: false })
           .limit(10);
@@ -83,7 +86,7 @@ export default function Home() {
           const ids = [...new Set(streamRows.map((s) => s.session_id))];
           const { data } = await supabase
             .from('sessions')
-            .select('id, status, created_at, ended_at, host_id, streams(id, display_name, user_id, youtube_url, users(avatar_url, display_name))')
+            .select('id, status, created_at, ended_at, host_id, streams(id, display_name, user_id, youtube_url, is_active, left_at, users(avatar_url, display_name))')
             .in('id', ids)
             .order('created_at', { ascending: false })
             .limit(10);
@@ -244,6 +247,37 @@ export default function Home() {
             ))}
           </div>
         </div>
+
+        <div className="max-w-6xl mx-auto w-full px-4 sm:px-6 pb-8 sm:pb-10">
+          <div className="grid lg:grid-cols-[1.2fr_0.8fr] gap-4 sm:gap-5">
+            <div className="bg-pov-surface border border-pov-border rounded-xl p-4 sm:p-5">
+              <p className="text-[10px] font-mono text-pov-muted uppercase tracking-wider mb-3">Fast path</p>
+              <div className="grid sm:grid-cols-2 gap-3">
+                <QuickActionCard
+                  title="I’m ready to host"
+                  description="Sign in, then create a session once your YouTube stream is live."
+                  actionLabel="Sign in to create"
+                  onClick={signInWithGoogle}
+                />
+                <QuickActionCard
+                  title="I just need the guide"
+                  description="Open the step-by-step OBS + YouTube setup guide."
+                  actionLabel="Open Setup Guide"
+                  to="/setup"
+                />
+              </div>
+            </div>
+
+            <div className="bg-pov-surface border border-pov-border rounded-xl p-4 sm:p-5">
+              <p className="text-[10px] font-mono text-pov-muted uppercase tracking-wider mb-3">What to expect</p>
+              <div className="space-y-2 text-sm text-pov-muted leading-relaxed">
+                <p>• OBS streams straight to YouTube.</p>
+                <p>• POV Sync keeps active sessions easy to resume.</p>
+                <p>• Mobile and desktop both get the same workflow.</p>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -257,18 +291,29 @@ export default function Home() {
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
       {/* ── Top bar: greeting + live badge ──────────────────── */}
-      <div className="flex items-center justify-between mb-6 sm:mb-8 animate-in">
-        <div>
+      <div className="grid gap-4 lg:grid-cols-[1fr_0.9fr] items-start mb-6 sm:mb-8 animate-in">
+        <div className="flex items-center justify-between gap-4">
+          <div>
           <h1 className="text-2xl font-bold tracking-tight">
             {profile?.display_name ? `Hey, ${profile.display_name.split(' ')[0]}` : 'Dashboard'}
           </h1>
-          <p className="text-sm text-pov-muted mt-0.5">Ready to stream?</p>
-        </div>
-        {publicLiveCount > 0 && (
-          <div className="flex items-center gap-2 text-xs font-mono text-pov-success bg-pov-success/10 border border-pov-success/20 rounded-full px-3 py-1.5 flex-shrink-0">
-            <span className="live-dot w-2 h-2 rounded-full bg-pov-success" />
-            {publicLiveCount} live
+            <p className="text-sm text-pov-muted mt-0.5">Ready to stream?</p>
           </div>
+          {publicLiveCount > 0 && (
+            <div className="flex items-center gap-2 text-xs font-mono text-pov-success bg-pov-success/10 border border-pov-success/20 rounded-full px-3 py-1.5 flex-shrink-0">
+              <span className="live-dot w-2 h-2 rounded-full bg-pov-success" />
+              {publicLiveCount} live
+            </div>
+          )}
+        </div>
+
+        {activeSession && (
+          <SessionResumeCard
+            session={activeSession}
+            to={user?.id === activeSession.host_id ? `/session/${activeSession.id}` : `/session/${activeSession.id}?pov=${user.id}`}
+            title="Continue your live session"
+            subtitle="You already have an active live session — jump straight back in."
+          />
         )}
       </div>
 
@@ -414,7 +459,7 @@ export default function Home() {
       {isEmpty && (
         <div className="animate-in" style={{ animationDelay: '0.06s' }}>
           {/* Big CTA empty state */}
-          <div className="text-center py-12 mb-8">
+          <div className="text-center py-10 sm:py-12 mb-8">
             <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-pov-accent/10 border border-pov-accent/20 flex items-center justify-center">
               <svg className="w-10 h-10 text-pov-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347c-.75.412-1.667-.13-1.667-.986V5.653z" />
@@ -452,10 +497,30 @@ export default function Home() {
   );
 }
 
+function QuickActionCard({ title, description, actionLabel, to, onClick }) {
+  const content = (
+    <div className="h-full rounded-lg border border-pov-border/60 bg-pov-bg/60 p-4 hover:border-pov-accent/25 transition-colors">
+      <h4 className="text-sm font-semibold text-pov-text">{title}</h4>
+      <p className="text-xs text-pov-muted mt-1.5 leading-relaxed">{description}</p>
+      <span className="inline-flex mt-4 text-xs font-medium text-pov-accent">{actionLabel} →</span>
+    </div>
+  );
+
+  if (onClick) {
+    return (
+      <button onClick={onClick} className="text-left">
+        {content}
+      </button>
+    );
+  }
+
+  return <Link to={to} className="block">{content}</Link>;
+}
+
 /* ── Live session card ──────────────────────────────────────── */
 
 function LiveSessionCard({ session, userId }) {
-  const streams = session.streams || [];
+  const streams = (session.streams || []).filter((stream) => stream.is_active !== false);
   const isHost = session.host_id === userId;
   const hostStream = streams.find((s) => s.user_id === session.host_id);
   const hostName = hostStream?.display_name ?? hostStream?.users?.display_name ?? 'Host';
@@ -521,7 +586,9 @@ function LiveSessionCard({ session, userId }) {
 /* ── Recent session card (grid card, not row) ───────────────── */
 
 function RecentSessionCard({ session, userId }) {
-  const streams = session.streams || [];
+  const streams = session.status === 'live'
+    ? (session.streams || []).filter((stream) => stream.is_active !== false)
+    : (session.streams || []);
   const pips = streams.slice(0, 4);
   const extra = streams.length - 4;
   const isHost = session.host_id === userId;

@@ -20,8 +20,12 @@ CREATE TABLE IF NOT EXISTS public.sessions (
   status           text CHECK (status IN ('live', 'ended')) DEFAULT 'live',
   anchor_stream_id uuid,  -- FK added after streams table exists
   created_at       timestamptz DEFAULT now(),
-  ended_at         timestamptz
+  ended_at         timestamptz,
+  vod_ready_at     timestamptz   -- Set once the final VOD offsets have been computed
 );
+
+ALTER TABLE public.sessions
+  ADD COLUMN IF NOT EXISTS vod_ready_at timestamptz;
 
 -- 3. Streams table
 CREATE TABLE IF NOT EXISTS public.streams (
@@ -35,8 +39,18 @@ CREATE TABLE IF NOT EXISTS public.streams (
   youtube_start_time  float,   -- Unix timestamp (seconds) from YT IFrame API getVideoStartTime()
                                -- Used as Layer 1 sync: exact offset = streamStartTime - anchorStartTime
                                -- Persisted so VOD recalculation works after server restart
-  joined_at           timestamptz DEFAULT now()
+  is_active           boolean DEFAULT true,
+  joined_at           timestamptz DEFAULT now(),
+  left_at             timestamptz
 );
+
+ALTER TABLE public.streams
+  ADD COLUMN IF NOT EXISTS is_active boolean DEFAULT true,
+  ADD COLUMN IF NOT EXISTS left_at timestamptz;
+
+UPDATE public.streams
+SET is_active = true
+WHERE is_active IS NULL;
 
 -- 4. Add the deferred FK from sessions → streams for anchor
 ALTER TABLE public.sessions

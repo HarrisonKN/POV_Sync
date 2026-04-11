@@ -1,14 +1,17 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { useActiveSession } from '../hooks/useActiveSession';
 import { supabase } from '../lib/supabase';
+import SessionResumeCard from '../components/SessionResumeCard';
 
 const MAX_AVATAR_PIPS = 4;
-const TABS = ['All', 'Hosted', 'Joined'];
+const TABS = ['All', 'Hosted', 'Joined', 'VODs'];
 
 export default function Profile() {
   const { userId } = useParams();
   const { user, profile: ownProfile } = useAuth();
+  const { activeSession } = useActiveSession();
 
   const [profile, setProfile] = useState(null);
   const [hostedSessions, setHostedSessions] = useState([]);
@@ -37,7 +40,7 @@ export default function Profile() {
 
         const { data: hosted } = await supabase
           .from('sessions')
-          .select('*, streams(id, display_name, user_id, users(avatar_url, display_name))')
+          .select('*, streams(id, display_name, user_id, is_active, left_at, users(avatar_url, display_name))')
           .eq('host_id', targetUserId)
           .order('created_at', { ascending: false });
         setHostedSessions(hosted || []);
@@ -51,7 +54,7 @@ export default function Profile() {
           const sessionIds = [...new Set(streamRows.map((s) => s.session_id))];
           const { data: participated } = await supabase
             .from('sessions')
-            .select('*, streams(id, display_name, user_id, users(avatar_url, display_name))')
+            .select('*, streams(id, display_name, user_id, is_active, left_at, users(avatar_url, display_name))')
             .in('id', sessionIds)
             .order('created_at', { ascending: false });
           setParticipatedSessions(participated || []);
@@ -90,12 +93,14 @@ export default function Profile() {
     return [...map.values()].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   })();
 
+  const vodSessions = allSessions.filter((s) => s.status === 'ended');
   const liveSessions = allSessions.filter((s) => s.status === 'live');
 
   const filteredSessions =
     activeTab === 'All' ? allSessions
     : activeTab === 'Hosted' ? hostedSessions
-    : participatedSessions;
+    : activeTab === 'Joined' ? participatedSessions
+    : vodSessions;
 
   const memberSince = profile.created_at
     ? new Date(profile.created_at).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
@@ -129,33 +134,56 @@ export default function Profile() {
           <div className="hidden sm:flex items-center gap-4">
             <StatPill label="Sessions" value={allSessions.length} />
             <StatPill label="Hosted" value={hostedSessions.length} />
+            <StatPill label="VODs" value={vodSessions.length} />
             {liveSessions.length > 0 && (
               <StatPill label="Live" value={liveSessions.length} accent />
             )}
           </div>
         </div>
 
+        {isOwnProfile && activeSession && (
+          <div className="mt-4">
+            <SessionResumeCard
+              session={activeSession}
+              to={user?.id === activeSession.host_id ? `/session/${activeSession.id}` : `/session/${activeSession.id}?pov=${user.id}`}
+              title="You have a live session running"
+              subtitle="Jump back in from your profile if you navigated away."
+              compact
+            />
+          </div>
+        )}
+
         {/* Stats row on mobile */}
         <div className="grid grid-cols-3 gap-2 sm:gap-3 mt-4 sm:mt-5 sm:hidden">
           <StatCard label="Total Sessions" value={allSessions.length} />
           <StatCard label="Hosted" value={hostedSessions.length} />
-          <StatCard label="Live Now" value={liveSessions.length} accent={liveSessions.length > 0} />
+          <StatCard label="VODs" value={vodSessions.length} accent={vodSessions.length > 0} />
         </div>
       </div>
 
       {/* ── Live-now banner ───────────────────────────────── */}
       {liveSessions.length > 0 && (
-        <div className="bg-pov-success/10 border border-pov-success/20 rounded-xl px-5 py-4 mb-6 animate-in">
-          <p className="text-xs font-mono text-pov-success mb-2.5 flex items-center gap-2">
-            <span className="live-dot w-1.5 h-1.5 rounded-full bg-pov-success" />
-            Currently Live
-          </p>
+        <div className="bg-pov-success/10 border border-pov-success/20 rounded-xl px-4 sm:px-5 py-4 mb-6 animate-in">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <p className="text-xs font-mono text-pov-success flex items-center gap-2">
+              <span className="live-dot w-1.5 h-1.5 rounded-full bg-pov-success" />
+              Currently Live
+            </p>
+            {isOwnProfile && activeSession && (
+              <Link
+                to={`/session/${activeSession.id}`}
+                className="text-xs font-mono text-pov-success hover:underline"
+              >
+                Return to current session →
+              </Link>
+            )}
+          </div>
           <div className="space-y-1.5">
             {liveSessions.map((s) => (
               <Link
                 key={s.id}
                 to={`/session/${s.id}?pov=${targetUserId}`}
-                className="flex items-center justify-between text-sm text-pov-text hover:text-pov-accent transition-colors"
+                className="flex items-center justify-between gap-3 text-sm text-pov-text hover:text-pov-accent transition-colors rounded-lg px-2 py-1 hover:bg-pov-success/10"
               >
                 <span className="truncate">
                   {(s.streams || []).map((st) => st.display_name).join(', ') || 'Session'}
@@ -240,6 +268,9 @@ function EmptyState({ tab, isOwnProfile }) {
     Joined: isOwnProfile
       ? { text: "You haven't joined any sessions yet.", action: 'Ask a friend for an invite link' }
       : { text: 'No joined sessions.' },
+    VODs: isOwnProfile
+      ? { text: 'No saved VODs yet.', action: 'End a live session to archive it here.' }
+      : { text: 'No VODs found.' },
   };
   const msg = messages[tab] || messages.All;
 
@@ -259,7 +290,10 @@ function EmptyState({ tab, isOwnProfile }) {
 /* ── Session card (grid version) ────────────────────────────── */
 
 function SessionCard({ session, targetUserId }) {
-  const streams = session.streams || [];
+  const allStreams = session.streams || [];
+  const streams = session.status === 'live'
+    ? allStreams.filter((stream) => stream.is_active !== false)
+    : allStreams;
   const isLive  = session.status === 'live';
   const isVod   = session.status === 'ended';
   const [povExpanded, setPovExpanded] = useState(false);
@@ -324,6 +358,20 @@ function SessionCard({ session, targetUserId }) {
           <p className="text-[11px] text-pov-muted font-mono truncate">
             {streams.map((s) => s.display_name).join(', ')}
           </p>
+        )}
+
+        {isLive && (
+          <div className="mt-3 inline-flex items-center gap-1.5 text-xs font-mono text-pov-success">
+            <span className="live-dot w-1.5 h-1.5 rounded-full bg-pov-success" />
+            Rejoin live session
+          </div>
+        )}
+
+        {isVod && (
+          <div className="mt-3 inline-flex items-center gap-1.5 text-xs font-mono text-pov-accent">
+            <span>📼</span>
+            Watch VOD
+          </div>
         )}
       </Link>
 

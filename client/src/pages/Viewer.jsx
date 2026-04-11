@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../lib/supabase';
 import YouTubePlayer from '../components/YouTubePlayer';
 import StatusIndicators from '../components/StatusIndicators';
 import ErrorState from '../components/ErrorState';
+import SessionRoomHeader from '../components/SessionRoomHeader';
 import { OFFSET_STEPS } from '../../../shared/constants.js';
 
 export default function Viewer() {
@@ -153,11 +154,14 @@ export default function Viewer() {
 
   // Auto-select first stream when main stage is empty and streams arrive
   useEffect(() => {
-    if (!mainStreamId && streams.length > 0) {
-      const anchor = streams.find((s) => s.is_anchor);
-      setMainStreamId(anchor?.id || streams[0]?.id);
+    const currentStreams = session?.status === 'ended'
+      ? streams
+      : streams.filter((stream) => stream.is_active !== false);
+    if (!mainStreamId && currentStreams.length > 0) {
+      const anchor = currentStreams.find((s) => s.is_anchor);
+      setMainStreamId(anchor?.id || currentStreams[0]?.id);
     }
-  }, [streams, mainStreamId]);
+  }, [streams, session?.status, mainStreamId]);
 
   // When streams change (loaded from DB, or new participant joins), ensure the
   // sync server knows about them.  This covers the case where streams load from
@@ -166,10 +170,13 @@ export default function Viewer() {
   useEffect(() => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    if (streams.length === 0) return;
+    const currentStreams = session?.status === 'ended'
+      ? streams
+      : streams.filter((stream) => stream.is_active !== false);
+    if (currentStreams.length === 0) return;
 
     // Only send for streams we haven't registered yet
-    const unregistered = streams.filter((s) => !registeredStreamsRef.current.has(s.id));
+    const unregistered = currentStreams.filter((s) => !registeredStreamsRef.current.has(s.id));
     if (unregistered.length === 0) return;
 
     ws.send(JSON.stringify({
@@ -181,7 +188,7 @@ export default function Viewer() {
     }));
     unregistered.forEach((s) => registeredStreamsRef.current.add(s.id));
     console.log(`[WS] Registered ${unregistered.length} new streams with sync server`);
-  }, [streams]);
+  }, [streams, session?.status]);
 
   // ── WebSocket — Sync Status Consumer ────────────────────────────────────────
   // Connect to the server's WS and listen for SYNC_OFFSETS, control state, etc.
@@ -399,17 +406,22 @@ export default function Viewer() {
 
   const isHost = user?.id === session?.host_id;
   const isVod  = session?.status === 'ended';
+  const visibleStreams = useMemo(() => (
+    isVod ? streams : streams.filter((stream) => stream.is_active !== false)
+  ), [isVod, streams]);
   // true for the host AND for whoever the host has delegated controls to
   const hasControl = isHost || (!!controlHolderUserId && user?.id === controlHolderUserId);
+  const hostStream = visibleStreams.find((s) => s.user_id === session?.host_id);
+  const hostName = hostStream?.display_name ?? hostStream?.users?.display_name ?? 'Host';
 
   // Derive a display-ready syncStats object.
   // Once the WebSocket sends a SYNC_OFFSETS message syncStats is populated with real data.
   // Before that, we build a stub from local stream data so the panels always render.
-  const anchorStream = streams.find((s) => s.is_anchor);
-  const effectiveSyncStats = syncStats ?? (streams.length > 0 ? {
-    offsets:             Object.fromEntries(streams.map((s) => [s.id, s.offset_seconds ?? 0])),
-    confidence:          Object.fromEntries(streams.map((s) => [s.id, 0])),
-    startTimesAvailable: Object.fromEntries(streams.map((s) => [s.id, false])),
+  const anchorStream = visibleStreams.find((s) => s.is_anchor);
+  const effectiveSyncStats = syncStats ?? (visibleStreams.length > 0 ? {
+    offsets:             Object.fromEntries(visibleStreams.map((s) => [s.id, s.offset_seconds ?? 0])),
+    confidence:          Object.fromEntries(visibleStreams.map((s) => [s.id, 0])),
+    startTimesAvailable: Object.fromEntries(visibleStreams.map((s) => [s.id, false])),
     anchorStreamId:      anchorStream?.id ?? null,
     timestamp:           null,
   } : null);
@@ -417,7 +429,7 @@ export default function Viewer() {
   // Keep a ref to the current streams array so callbacks can read it without
   // being recreated every time streams changes.
   const streamsRef = useRef(streams);
-  useEffect(() => { streamsRef.current = streams; }, [streams]);
+  useEffect(() => { streamsRef.current = visibleStreams; }, [visibleStreams]);
 
   // Keep a ref to offsets so offset callbacks stay stable
   const offsetsRef = useRef(offsets);
@@ -759,7 +771,7 @@ export default function Viewer() {
 
   // Leave session handler — participants only
   async function handleLeaveSession() {
-    if (!confirm('Leave this session? Your stream will be removed.')) return;
+    if (!confirm('Leave this session? Your stream will be archived for the VOD.')) return;
     setLeaving(true);
     try {
       const token = await getAccessToken();
@@ -804,6 +816,18 @@ export default function Viewer() {
 
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4">
+      <SessionRoomHeader
+        title="Shared live room"
+        session={session}
+        hostLabel={hostName}
+        roleLabel={isHost ? 'Host control' : hasControl ? 'Delegated control' : 'Participant view'}
+        roleTone={isHost ? 'host' : 'participant'}
+        statusLabel={isVod ? 'VOD session' : 'Live session'}
+        statusTone={isVod ? 'vod' : 'live'}
+        secondaryLabel={isHost ? 'You manage sync for everyone' : hasControl ? 'You can adjust sync for the room' : 'Following the host sync state'}
+        className="mb-3 sm:mb-4"
+      />
+
       {/* Session header bar */}
       <div className="flex items-center justify-between gap-2 mb-3 sm:mb-4">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -817,7 +841,7 @@ export default function Viewer() {
             {!isVod ? '● LIVE' : '📼 VOD'}
           </span>
           <span className="text-[10px] sm:text-xs text-pov-muted font-mono">
-            {streams.length} stream{streams.length !== 1 ? 's' : ''}
+            {visibleStreams.length} stream{visibleStreams.length !== 1 ? 's' : ''}
           </span>
           {isVod && session?.ended_at && (
             <span className="text-[10px] sm:text-xs text-pov-muted/60 font-mono hidden sm:inline">
@@ -868,7 +892,7 @@ export default function Viewer() {
       {!isHost && !isVod && session && (
         <ParticipantBar
           session={session}
-          streams={streams}
+          streams={visibleStreams}
           effectiveSyncStats={effectiveSyncStats}
           controlHolderUserId={controlHolderUserId}
           userId={user?.id}
@@ -877,8 +901,8 @@ export default function Viewer() {
 
       {/* Main Stage — shows the selected stream's player */}
       <div className="aspect-video bg-black border border-pov-border rounded-lg mb-2 sm:mb-3 overflow-hidden relative">
-        {streams.length > 0 ? (
-          streams.map((stream) => (
+        {visibleStreams.length > 0 ? (
+          visibleStreams.map((stream) => (
             <div
               key={`stage-${stream.id}`}
               className={`absolute inset-0 transition-opacity duration-200 ${
@@ -926,8 +950,8 @@ export default function Viewer() {
 
       {/* Filmstrip — thumbnails that mirror each player's live frame */}
       <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-2 sm:overflow-x-auto mb-2 pb-1">
-        {streams.length > 0 ? (
-          streams.map((stream) => {
+        {visibleStreams.length > 0 ? (
+          visibleStreams.map((stream) => {
             const isActive = stream.id === mainStreamId;
             return (
               <div key={`film-wrap-${stream.id}`} className="w-full sm:flex-shrink-0 sm:w-48 flex flex-col gap-1">
@@ -996,7 +1020,7 @@ export default function Viewer() {
       {/* Sync Status Panel — host/delegate, live sessions */}
       {hasControl && !isVod && effectiveSyncStats && (
         <SyncStatusPanel
-          streams={streams}
+          streams={visibleStreams}
           syncStats={effectiveSyncStats}
           session={session}
         />
@@ -1015,7 +1039,7 @@ export default function Viewer() {
       {/* Anchor-dead banner — shown when anchor stream goes away */}
       {anchorDeadBanner && !isVod && (
         <AnchorDeadBanner
-          streams={streams}
+          streams={visibleStreams}
           onPromote={(streamId) => {
             handlePromoteAnchor(streamId);
             setAnchorDeadBanner(false);
@@ -1048,9 +1072,9 @@ export default function Viewer() {
       )}
 
       {/* Control Delegation panel — host only, live only */}
-      {isHost && !isVod && streams.length > 1 && (
+      {isHost && !isVod && visibleStreams.length > 1 && (
         <ControlDelegationPanel
-          streams={streams}
+          streams={visibleStreams}
           session={session}
           controlHolderUserId={controlHolderUserId}
           onDelegate={handleDelegateControl}
