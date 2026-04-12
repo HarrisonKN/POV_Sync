@@ -101,6 +101,8 @@ function TwitchPlayer({
 
       const el = document.createElement('div');
       el.id = `twitch-player-${Math.random().toString(36).slice(2, 10)}`;
+      // Force the wrapper div to fill the container so the iframe stretches
+      el.style.cssText = 'width:100%;height:100%;';
       container.appendChild(el);
 
       if (!window.Twitch?.Player) {
@@ -118,6 +120,26 @@ function TwitchPlayer({
       });
 
       playerRef.current = player;
+
+      // Helper: force all children + iframes inside the embed div to fill 100%
+      const stretchEmbedChildren = () => {
+        if (destroyed) return;
+        const iframe = el.querySelector('iframe');
+        if (iframe) {
+          iframe.style.cssText = 'width:100%!important;height:100%!important;position:absolute!important;top:0!important;left:0!important;';
+        }
+        for (const child of el.children) {
+          child.style.cssText = 'width:100%!important;height:100%!important;position:relative!important;';
+        }
+      };
+
+      // The Twitch SDK injects its own wrapper div + iframe. Force them to
+      // fill the container so the player isn't a tiny 400×300 box.
+      requestAnimationFrame(stretchEmbedChildren);
+
+      // Also watch for late-injected iframes (the SDK can be async)
+      const observer = new MutationObserver(stretchEmbedChildren);
+      observer.observe(el, { childList: true, subtree: true });
 
       // Create a shim API compatible with the YouTubePlayer ref interface
       const apiShim = {
@@ -163,6 +185,7 @@ function TwitchPlayer({
 
       player.addEventListener(window.Twitch.Player.READY, () => {
         if (destroyed) return;
+        stretchEmbedChildren(); // re-apply sizing once iframe is guaranteed present
         if (onReady) onReady(apiShim);
       });
 
@@ -176,13 +199,18 @@ function TwitchPlayer({
         if (destroyed) return;
         if (onStateChange) onStateChange(2); // YT.PlayerState.PAUSED = 2
       });
+
+      return observer;
     }
 
-    init();
+    let observer = null;
+
+    init().then((obs) => { observer = obs; });
 
     return () => {
       destroyed = true;
       playerRef.current = null;
+      if (observer) observer.disconnect();
       if (containerRef.current) {
         containerRef.current.innerHTML = '';
       }
