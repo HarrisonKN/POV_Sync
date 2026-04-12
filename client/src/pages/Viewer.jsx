@@ -9,9 +9,9 @@ import ConfirmModal from '../components/ConfirmModal';
 import SessionRoomHeader from '../components/SessionRoomHeader';
 import { OFFSET_STEPS } from '../../../shared/constants.js';
 
-const WALL_TILE_MIN_WIDTH = 180;
-const WALL_TILE_MAX_WIDTH = 560;
-const WALL_TILE_DEFAULT_WIDTH = 300;
+const ROOM_TILE_MIN_WIDTH = 180;
+const ROOM_TILE_MAX_WIDTH = 560;
+const ROOM_TILE_DEFAULT_WIDTH = 300;
 
 export default function Viewer() {
   const { sessionId } = useParams();
@@ -30,12 +30,12 @@ export default function Viewer() {
   const [error, setError] = useState(null);
   const [ending, setEnding] = useState(false);
   const [leaving, setLeaving] = useState(false);
-  const [wallTileWidth, setWallTileWidth] = useState(() => {
+  const [roomTileWidth, setRoomTileWidth] = useState(() => {
     try {
-      const saved = Number(localStorage.getItem('povsync.wallTileWidth'));
-      return Number.isFinite(saved) && saved > 0 ? saved : WALL_TILE_DEFAULT_WIDTH;
+      const saved = Number(localStorage.getItem('povsync.roomTileWidth'));
+      return Number.isFinite(saved) && saved > 0 ? saved : ROOM_TILE_DEFAULT_WIDTH;
     } catch (_) {
-      return WALL_TILE_DEFAULT_WIDTH;
+      return ROOM_TILE_DEFAULT_WIDTH;
     }
   });
   const [addPovOpen, setAddPovOpen] = useState(false);
@@ -61,9 +61,9 @@ export default function Viewer() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('povsync.wallTileWidth', String(wallTileWidth));
+      localStorage.setItem('povsync.roomTileWidth', String(roomTileWidth));
     } catch (_) {}
-  }, [wallTileWidth]);
+  }, [roomTileWidth]);
 
   // Player refs keyed by streamId (stage) and "film-<streamId>" (filmstrip)
   const playerRefs = useRef({});
@@ -432,7 +432,7 @@ export default function Viewer() {
   const nextPovLabel = `POV ${visibleStreams.length + 1}`;
   const hostStream = visibleStreams.find((s) => s.user_id === session?.host_id);
   const hostName = hostStream?.display_name ?? hostStream?.users?.display_name ?? 'Host';
-  const wallTileMinWidth = Math.min(Math.max(wallTileWidth, WALL_TILE_MIN_WIDTH), WALL_TILE_MAX_WIDTH);
+  const roomTileMinWidth = Math.min(Math.max(roomTileWidth, ROOM_TILE_MIN_WIDTH), ROOM_TILE_MAX_WIDTH);
 
   // Derive a display-ready syncStats object.
   // Once the WebSocket sends a SYNC_OFFSETS message syncStats is populated with real data.
@@ -951,7 +951,7 @@ export default function Viewer() {
   }
 
   return (
-    <div className={viewMode === 'wall' ? 'w-full px-3 sm:px-4 py-3 sm:py-4' : 'max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4'}>
+    <div className="w-full max-w-none px-3 sm:px-4 py-3 sm:py-4">
       <SessionRoomHeader
         title="Live room"
         session={session}
@@ -965,73 +965,75 @@ export default function Viewer() {
       />
 
       {/* Session header bar */}
-      <div className="flex items-center justify-between gap-2 mb-3 sm:mb-4">
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-          <span
-            className={`text-[10px] sm:text-xs font-mono px-1.5 sm:px-2 py-1 rounded border flex-shrink-0 ${
-              !isVod
-                ? 'bg-pov-success/10 border-pov-success/30 text-pov-success'
-                : 'bg-pov-muted/10 border-pov-muted/30 text-pov-muted'
-            }`}
-          >
-            {!isVod ? '● LIVE' : '📼 VOD'}
-          </span>
-          <span className="text-[10px] sm:text-xs text-pov-muted font-mono">
-            {visibleStreams.length} stream{visibleStreams.length !== 1 ? 's' : ''}
-          </span>
-          {isVod && session?.ended_at && (
-            <span className="text-[10px] sm:text-xs text-pov-muted/60 font-mono hidden sm:inline">
-              {new Date(session.ended_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+      <div className="mb-3 sm:mb-4 rounded-xl border border-pov-border bg-pov-surface/60 px-3 py-3 sm:px-4 sm:py-3 backdrop-blur-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-wrap">
+            <span
+              className={`text-[10px] sm:text-xs font-mono px-1.5 sm:px-2 py-1 rounded border flex-shrink-0 ${
+                !isVod
+                  ? 'bg-pov-success/10 border-pov-success/30 text-pov-success'
+                  : 'bg-pov-muted/10 border-pov-muted/30 text-pov-muted'
+              }`}
+            >
+              {!isVod ? '● LIVE' : '📼 VOD'}
             </span>
-          )}
-        </div>
-
-        <button
-          type="button"
-          onClick={toggleViewMode}
-          className="text-[10px] sm:text-xs font-mono bg-pov-surface border border-pov-border text-pov-text hover:bg-pov-border/30 rounded px-2 sm:px-3 py-1.5 transition-colors flex-shrink-0"
-        >
-          {viewMode === 'wall' ? 'Stage view' : 'Wall view'}
-        </button>
-
-        {viewMode === 'wall' && (
-          <div className="flex min-w-[190px] flex-1 items-center gap-2 rounded-lg border border-pov-border bg-pov-surface px-3 py-2">
-            <span className="text-[10px] sm:text-xs font-mono text-pov-muted whitespace-nowrap">Tile size</span>
-            <input
-              type="range"
-              min={WALL_TILE_MIN_WIDTH}
-              max={WALL_TILE_MAX_WIDTH}
-              step="20"
-              value={wallTileWidth}
-              onChange={(event) => setWallTileWidth(Number(event.target.value))}
-              className="w-28 sm:w-40 accent-pov-accent"
-              aria-label="Set wall tile width"
-            />
-            <span className="w-12 text-right text-[10px] sm:text-xs font-mono text-pov-text tabular-nums">
-              {wallTileWidth}px
+            <span className="text-[10px] sm:text-xs text-pov-muted font-mono">
+              {visibleStreams.length} stream{visibleStreams.length !== 1 ? 's' : ''}
             </span>
+            {isVod && session?.ended_at && (
+              <span className="text-[10px] sm:text-xs text-pov-muted/60 font-mono hidden sm:inline">
+                {new Date(session.ended_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+              </span>
+            )}
           </div>
-        )}
 
-        {isHost && session?.status === 'live' && (
-          <button
-            onClick={handleEndSession}
-            disabled={ending}
-            className="text-[10px] sm:text-xs font-mono bg-pov-danger/10 border border-pov-danger/30 text-pov-danger hover:bg-pov-danger/20 rounded px-2 sm:px-3 py-1.5 transition-colors disabled:opacity-50 flex-shrink-0"
-          >
-            {ending ? 'Ending...' : '⏹ End Session'}
-          </button>
-        )}
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <button
+              type="button"
+              onClick={toggleViewMode}
+              className="text-[10px] sm:text-xs font-mono bg-pov-bg border border-pov-border text-pov-text hover:bg-pov-border/30 rounded px-2.5 sm:px-3 py-1.5 transition-colors flex-shrink-0"
+            >
+              {viewMode === 'wall' ? 'Stage view' : 'Wall view'}
+            </button>
 
-        {!isHost && session?.status === 'live' && (
-          <button
-            onClick={handleLeaveSession}
-            disabled={leaving}
-            className="text-[10px] sm:text-xs font-mono bg-pov-danger/10 border border-pov-danger/30 text-pov-danger hover:bg-pov-danger/20 rounded px-2 sm:px-3 py-1.5 transition-colors disabled:opacity-50 flex-shrink-0"
-          >
-            {leaving ? 'Leaving...' : '🚪 Leave'}
-          </button>
-        )}
+            <div className="flex min-w-[250px] flex-1 items-center gap-2 rounded-lg border border-pov-border bg-pov-bg px-3 py-2">
+              <span className="text-[10px] sm:text-xs font-mono text-pov-muted whitespace-nowrap">Scale</span>
+              <input
+                type="range"
+                min={ROOM_TILE_MIN_WIDTH}
+                max={ROOM_TILE_MAX_WIDTH}
+                step="20"
+                value={roomTileWidth}
+                onChange={(event) => setRoomTileWidth(Number(event.target.value))}
+                className="w-32 sm:w-44 accent-pov-accent"
+                aria-label="Set room layout scale"
+              />
+              <span className="w-12 text-right text-[10px] sm:text-xs font-mono text-pov-text tabular-nums">
+                {roomTileWidth}px
+              </span>
+            </div>
+
+            {isHost && session?.status === 'live' && (
+              <button
+                onClick={handleEndSession}
+                disabled={ending}
+                className="text-[10px] sm:text-xs font-mono bg-pov-danger/10 border border-pov-danger/30 text-pov-danger hover:bg-pov-danger/20 rounded px-2.5 sm:px-3 py-1.5 transition-colors disabled:opacity-50 flex-shrink-0"
+              >
+                {ending ? 'Ending...' : '⏹ End Session'}
+              </button>
+            )}
+
+            {!isHost && session?.status === 'live' && (
+              <button
+                onClick={handleLeaveSession}
+                disabled={leaving}
+                className="text-[10px] sm:text-xs font-mono bg-pov-danger/10 border border-pov-danger/30 text-pov-danger hover:bg-pov-danger/20 rounded px-2.5 sm:px-3 py-1.5 transition-colors disabled:opacity-50 flex-shrink-0"
+              >
+                {leaving ? 'Leaving...' : '🚪 Leave'}
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Session links — host only, live sessions only */}
@@ -1065,7 +1067,7 @@ export default function Viewer() {
       {viewMode === 'wall' ? (
         <div
           className="grid gap-2 sm:gap-3 mb-2 sm:mb-3"
-          style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${wallTileMinWidth}px, 1fr))` }}
+          style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${roomTileMinWidth}px, 1fr))` }}
         >
           {visibleStreams.map((stream) => {
             const isActive = stream.id === mainStreamId;
@@ -1179,12 +1181,13 @@ export default function Viewer() {
           </div>
 
           {/* Filmstrip — thumbnails that mirror each player's live frame */}
-          <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-2 sm:overflow-x-auto mb-2 pb-1">
+          <div className="grid gap-2 sm:gap-3 sm:overflow-x-auto mb-2 pb-1"
+               style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${roomTileMinWidth}px, 1fr))` }}>
             {visibleStreams.map((stream) => {
               const isActive = stream.id === mainStreamId;
 
               return (
-                <div key={`film-wrap-${stream.id}`} className="w-full sm:flex-shrink-0 sm:w-48 flex flex-col gap-1">
+                <div key={`film-wrap-${stream.id}`} className="flex flex-col gap-1">
                   <button
                     onClick={() => handleSwapStream(stream.id)}
                     className={`w-full rounded-lg border-2 transition-all overflow-hidden relative group ${
@@ -1235,8 +1238,8 @@ export default function Viewer() {
             })}
 
             {canAddPov && renderAddPovTile(
-              'w-full sm:flex-shrink-0 sm:w-48 flex flex-col gap-1',
-              'relative w-full aspect-video rounded-lg border-2 border-dashed border-pov-accent/50 overflow-hidden transition-all hover:border-pov-accent'
+              'flex flex-col gap-1',
+              'relative aspect-video rounded-lg border-2 border-dashed border-pov-accent/50 overflow-hidden transition-all hover:border-pov-accent'
             )}
 
             {visibleStreams.length === 0 && !canAddPov && (
