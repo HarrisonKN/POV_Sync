@@ -40,7 +40,7 @@ export default function JoinSession() {
 
   // Fetch session info
   useEffect(() => {
-    if (!code) return;
+    if (!code) { setLoading(false); return; }
     async function fetchSession() {
       try {
         const res = await fetch(`/api/sessions/join/${code}`);
