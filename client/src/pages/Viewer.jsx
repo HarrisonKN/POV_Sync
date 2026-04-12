@@ -411,6 +411,7 @@ export default function Viewer() {
   // true for the host AND for whoever the host has delegated controls to
   const hasControl = isHost || (!!controlHolderUserId && user?.id === controlHolderUserId);
   const canAddPov = isHost && !isVod && visibleStreams.length < 5;
+  const nextPovLabel = `POV ${visibleStreams.length + 1}`;
   const hostStream = visibleStreams.find((s) => s.user_id === session?.host_id);
   const hostName = hostStream?.display_name ?? hostStream?.users?.display_name ?? 'Host';
 
@@ -591,10 +592,10 @@ export default function Viewer() {
   const openAddPovModal = useCallback(() => {
     if (!isHost || isVod) return;
     setAddPovUrl('');
-    setAddPovDisplayName('');
+    setAddPovDisplayName(nextPovLabel);
     setAddPovError(null);
     setAddPovOpen(true);
-  }, [isHost, isVod]);
+  }, [isHost, isVod, nextPovLabel]);
 
   const closeAddPovModal = useCallback(() => {
     if (addPovSubmitting) return;

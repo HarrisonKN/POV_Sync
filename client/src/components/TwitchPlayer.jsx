@@ -186,6 +186,12 @@ function TwitchPlayer({
       player.addEventListener(window.Twitch.Player.READY, () => {
         if (destroyed) return;
         stretchEmbedChildren(); // re-apply sizing once iframe is guaranteed present
+        try {
+          if (!isMainRef.current) {
+            player.setMuted(true);
+          }
+          player.play();
+        } catch (_) {}
         if (onReady) onReady(apiShim);
       });
 

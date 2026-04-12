@@ -264,6 +264,8 @@ router.post('/:id/streams', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Session is full (max 5 streams for MVP)' });
     }
 
+    const nextPovIndex = (count ?? 0) + 1;
+
     // Use authenticated client for INSERT (RLS: auth.uid() = user_id)
     const db = req.supabase;
 
@@ -271,12 +273,13 @@ router.post('/:id/streams', requireAuth, async (req, res) => {
     syncManager.startSession(id, (msg) => broadcastToSession(id, msg));
 
     for (const entry of incomingStreams) {
+      const fallbackLabel = `POV ${nextPovIndex + insertedStreams.length}`;
       const { data: stream, error: streamError } = await db
         .from('streams')
         .insert({
           session_id: id,
           user_id: req.supabaseUser.id,
-          display_name: entry.displayName,
+          display_name: entry.displayName || fallbackLabel,
           youtube_url: entry.youtubeUrl,
           platform: entry.platform,
           offset_seconds: 0,
