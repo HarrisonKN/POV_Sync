@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../lib/supabase';
-import YouTubePlayer from '../components/YouTubePlayer';
+import StreamPlayer from '../components/StreamPlayer';
 import StatusIndicators from '../components/StatusIndicators';
 import ErrorState from '../components/ErrorState';
 import ConfirmModal from '../components/ConfirmModal';
@@ -300,6 +300,9 @@ export default function Viewer() {
       for (const stream of currentStreams) {
         if (sentStartTimes.current.has(stream.id)) continue;
 
+        // Skip Twitch streams — Twitch embeds don't expose reliable UTC-based time
+        if (stream.platform === 'twitch') continue;
+
         const player = playerRefs.current[stream.id];
         if (!player || typeof player.getCurrentTime !== 'function') continue;
 
@@ -442,10 +445,14 @@ export default function Viewer() {
     const sessionStatus = sessionRef.current?.status;
 
     // ── Report synthetic start time to sync server ─────────────────────────
-    // For live streams, getCurrentTime() returns elapsed seconds since the
-    // stream went live.  We compute: startTime ≈ Date.now()/1000 - playerTime.
+    // For live YouTube streams, getCurrentTime() returns elapsed seconds since
+    // the stream went live.  We compute: startTime ≈ Date.now()/1000 - playerTime.
     // Also persist to DB so VOD recalculation survives server restarts.
-    if (sessionStatus !== 'ended') {
+    // Skip Twitch streams — they don't expose reliable UTC-based timing.
+    const stream = streams.find((s) => s.id === streamId);
+    const isTwitch = stream?.platform === 'twitch' || player._isTwitch;
+
+    if (sessionStatus !== 'ended' && !isTwitch) {
       try {
         const pt = player.getCurrentTime?.() ?? 0;
         if (pt > 0) {
@@ -928,8 +935,9 @@ export default function Viewer() {
                 stream.id === mainStreamId ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'
               }`}
             >
-              <YouTubePlayer
-                youtubeUrl={stream.youtube_url}
+              <StreamPlayer
+                streamUrl={stream.youtube_url}
+                platform={stream.platform}
                 isMain={stream.id === mainStreamId}
                 onReady={(player) => handlePlayerReady(stream.id, player)}
                 onStateChange={(state) => handleStageStateChange(stream.id, state)}
@@ -984,8 +992,9 @@ export default function Viewer() {
                   }`}
                 >
                   <div className="aspect-video pointer-events-none">
-                    <YouTubePlayer
-                      youtubeUrl={stream.youtube_url}
+                    <StreamPlayer
+                      streamUrl={stream.youtube_url}
+                      platform={stream.platform}
                       isMain={false}
                       onReady={(player) => {
                         playerRefs.current[`film-${stream.id}`] = player;

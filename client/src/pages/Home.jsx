@@ -123,7 +123,7 @@ export default function Home() {
   async function handleCreate(e) {
     e.preventDefault();
     setCreateError('');
-    if (!youtubeUrl.trim()) { setCreateError('Paste your YouTube stream URL'); return; }
+    if (!youtubeUrl.trim()) { setCreateError('Paste your stream URL (YouTube or Twitch)'); return; }
     setCreateLoading(true);
     try {
       const token = await getAccessToken();
@@ -189,7 +189,7 @@ export default function Home() {
                 <span className="text-gradient">perspective</span>
               </h1>
               <p className="text-pov-muted text-base sm:text-lg max-w-md mb-6 sm:mb-8 leading-relaxed">
-                Sync your squad's YouTube streams in one view.
+                Sync your squad's YouTube & Twitch streams in one view.
                 Switch POVs instantly, never miss a play.
               </p>
 
@@ -212,7 +212,7 @@ export default function Home() {
             {/* Right: Visual feature cards — visible on all screens */}
             <div className="grid grid-cols-2 gap-2 sm:gap-3 animate-in" style={{ animationDelay: '0.1s' }}>
               {[
-                { icon: '📺', title: 'Multi-POV', desc: 'Up to 8 streams synced in one session' },
+                { icon: '📺', title: 'Multi-POV', desc: 'Up to 8 YouTube & Twitch streams synced' },
                 { icon: '🔗', title: 'One-Click Join', desc: 'Share a link, squad joins instantly' },
                 { icon: '⚡', title: 'Auto Sync', desc: 'UTC-based offset, zero-latency sync' },
                 { icon: '🎮', title: 'Gaming First', desc: 'Built for competitive & co-op streams' },
@@ -234,7 +234,7 @@ export default function Home() {
         <div className="border-t border-pov-border/50 bg-pov-surface/30">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 text-center">
             {[
-              ['01', 'Create', 'Paste your YouTube stream link & go live'],
+              ['01', 'Create', 'Paste your YouTube or Twitch stream link & go live'],
               ['02', 'Invite', 'Share the join code with your squad'],
               ['03', 'Sync', 'Switch between POVs, perfectly in sync'],
             ].map(([step, title, desc]) => (
@@ -254,7 +254,7 @@ export default function Home() {
               <div className="grid sm:grid-cols-2 gap-3">
                 <QuickActionCard
                   title="I’m ready to host"
-                  description="Sign in, then create a session once your YouTube stream is live."
+                  description="Sign in, then create a session once your YouTube or Twitch stream is live."
                   actionLabel="Sign in to create"
                   onClick={signInWithGoogle}
                 />
@@ -270,7 +270,7 @@ export default function Home() {
             <div className="bg-pov-surface border border-pov-border rounded-xl p-4 sm:p-5">
               <p className="text-[10px] font-mono text-pov-muted uppercase tracking-wider mb-3">What to expect</p>
               <div className="space-y-2 text-sm text-pov-muted leading-relaxed">
-                <p>• OBS streams straight to YouTube.</p>
+                <p>• OBS streams straight to YouTube or Twitch.</p>
                 <p>• POV Sync keeps active sessions easy to resume.</p>
                 <p>• Mobile and desktop both get the same workflow.</p>
               </div>
@@ -337,7 +337,7 @@ export default function Home() {
             </div>
             <div className="min-w-0">
               <p className="font-semibold text-pov-text text-sm">Create Session</p>
-              <p className="text-xs text-pov-muted mt-0.5">Start hosting with your YouTube stream</p>
+              <p className="text-xs text-pov-muted mt-0.5">Start hosting with your YouTube or Twitch stream</p>
             </div>
           </button>
 
@@ -349,7 +349,7 @@ export default function Home() {
                     type="url"
                     value={youtubeUrl}
                     onChange={(e) => setYoutubeUrl(e.target.value)}
-                    placeholder="https://youtube.com/watch?v=..."
+                    placeholder="YouTube or Twitch stream URL"
                     className="w-full bg-pov-bg border border-pov-border rounded-lg px-4 py-2.5 text-sm text-pov-text placeholder:text-pov-muted/40 focus:outline-none focus:border-pov-accent transition-colors"
                     autoFocus
                   />
@@ -466,7 +466,7 @@ export default function Home() {
             </div>
             <h3 className="text-xl font-bold mb-2">No sessions yet</h3>
             <p className="text-sm text-pov-muted max-w-sm mx-auto mb-6">
-              Create a session with your YouTube stream and invite your squad to watch together.
+              Create a session with your YouTube or Twitch stream and invite your squad to watch together.
             </p>
             <button
               onClick={() => togglePanel('create')}

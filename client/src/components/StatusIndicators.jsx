@@ -17,6 +17,11 @@ export default function StatusIndicators({
 }) {
   const indicators = [];
 
+  // Platform indicator — show Twitch badge for non-YouTube streams
+  if (stream.platform === 'twitch') {
+    indicators.push({ key: 'platform', emoji: '🟣', label: 'Twitch' });
+  }
+
   // Role indicators
   if (stream.is_anchor) {
     indicators.push({ key: 'anchor', ...ROLE_INDICATORS.anchor });

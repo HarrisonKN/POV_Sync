@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import YouTubePlayer from '../components/YouTubePlayer';
+import StreamPlayer from '../components/StreamPlayer';
 import StatusIndicators from '../components/StatusIndicators';
 import ErrorState from '../components/ErrorState';
 import SessionRoomHeader from '../components/SessionRoomHeader';
@@ -322,8 +322,9 @@ export default function Spectator() {
                 stream.id === mainStreamId ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'
               }`}
             >
-              <YouTubePlayer
-                youtubeUrl={stream.youtube_url}
+              <StreamPlayer
+                streamUrl={stream.youtube_url}
+                platform={stream.platform}
                 isMain={stream.id === mainStreamId}
                 onReady={(player) => handlePlayerReady(stream.id, player)}
                 onStateChange={(state) => handleStageStateChange(stream.id, state)}
@@ -376,8 +377,9 @@ export default function Spectator() {
                 }`}
               >
                 <div className="aspect-video pointer-events-none">
-                  <YouTubePlayer
-                    youtubeUrl={stream.youtube_url}
+                  <StreamPlayer
+                    streamUrl={stream.youtube_url}
+                    platform={stream.platform}
                     isMain={false}
                     onReady={(player) => {
                       playerRefs.current[`film-${stream.id}`] = player;

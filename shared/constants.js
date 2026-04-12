@@ -4,6 +4,12 @@ export const SESSION_STATUS = {
   ENDED: 'ended',
 };
 
+// Stream platform identifiers
+export const PLATFORM = {
+  YOUTUBE: 'youtube',
+  TWITCH: 'twitch',
+};
+
 // Sync status indicators
 export const SYNC_STATUS = {
   SYNCED: 'synced',

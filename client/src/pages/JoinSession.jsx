@@ -111,7 +111,7 @@ export default function JoinSession() {
     setError(null);
 
     if (!youtubeUrl.trim()) {
-      setError('Please enter your YouTube stream URL');
+      setError('Please enter your stream URL (YouTube or Twitch)');
       return;
     }
 
@@ -201,7 +201,7 @@ export default function JoinSession() {
               <div className="space-y-3 text-sm text-pov-muted leading-relaxed">
                 <p>1. Paste the join code or participant link.</p>
                 <p>2. Sign in if needed.</p>
-                <p>3. Add your YouTube stream URL once you’re live.</p>
+                <p>3. Add your stream URL (YouTube or Twitch) once you're live.</p>
                 <p>4. You’ll enter the shared room right away.</p>
               </div>
               <div className="mt-4 flex flex-wrap gap-2">
@@ -276,7 +276,7 @@ export default function JoinSession() {
           <div className="bg-pov-surface border border-pov-border rounded-2xl p-5 sm:p-6">
             <p className="text-[10px] font-mono text-pov-muted uppercase tracking-wider mb-3">Before you join</p>
             <ul className="space-y-2 text-sm text-pov-muted leading-relaxed">
-              <li>• Start your YouTube stream first.</li>
+              <li>• Start your YouTube or Twitch stream first.</li>
               <li>• Keep OBS pointed at the live scene you want to share.</li>
               <li>• Use the participant link from your host, not the spectator link.</li>
               <li>• You can always come back here if you navigate away.</li>
@@ -307,7 +307,7 @@ export default function JoinSession() {
             <div>
               <h1 className="text-2xl font-bold font-mono mb-2">Join Session</h1>
               <p className="text-sm text-pov-muted max-w-lg">
-                Submit your YouTube stream URL to join this session.
+                Submit your stream URL (YouTube or Twitch) to join this session.
               </p>
             </div>
             <span className="hidden sm:inline-flex text-[10px] font-mono text-pov-muted bg-pov-bg border border-pov-border rounded-full px-3 py-1">
@@ -354,14 +354,14 @@ export default function JoinSession() {
 
             <div>
               <label htmlFor="youtube-url" className="block text-xs font-mono text-pov-muted mb-1.5">
-                Your YouTube Stream URL
+                Your Stream URL
               </label>
               <input
                 id="youtube-url"
                 type="url"
                 value={youtubeUrl}
                 onChange={(e) => setYoutubeUrl(e.target.value)}
-                placeholder="https://youtube.com/watch?v=..."
+                placeholder="YouTube or Twitch stream URL"
                 className="w-full bg-pov-bg border border-pov-border rounded-xl px-4 py-3 text-sm text-pov-text placeholder:text-pov-muted/50 focus:outline-none focus:border-pov-accent transition-colors"
               />
             </div>
@@ -396,7 +396,7 @@ export default function JoinSession() {
           <div className="bg-pov-surface border border-pov-border rounded-2xl p-5 sm:p-6">
             <p className="text-[10px] font-mono text-pov-muted uppercase tracking-wider mb-3">Helpful reminders</p>
             <ul className="space-y-2 text-sm text-pov-muted leading-relaxed">
-              <li>• You need to be live on YouTube before you submit.</li>
+              <li>• You need to be live on YouTube or Twitch before you submit.</li>
               <li>• The participant link is for streamers; the spectator link is read-only.</li>
               <li>• If you leave the page, the navbar can take you back to any active live session.</li>
             </ul>

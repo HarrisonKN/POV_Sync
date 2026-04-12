@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { supabaseAdmin } from '../lib/supabase.js';
 import { requireAuth } from '../lib/supabaseAuth.js';
-import { generateLinkCode, extractYouTubeVideoId } from '../../../shared/helpers.js';
+import { generateLinkCode, extractYouTubeVideoId, detectPlatform } from '../../../shared/helpers.js';
 import * as syncManager from '../services/syncManager.js';
 import { broadcastToSession, setControlDelegation } from '../websocket/index.js';
 
@@ -26,9 +26,10 @@ router.post('/', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'youtubeUrl and displayName are required' });
     }
 
-    // Server-side YouTube URL validation
-    if (!extractYouTubeVideoId(youtubeUrl)) {
-      return res.status(400).json({ error: 'Invalid YouTube URL' });
+    // Server-side URL validation — accept YouTube or Twitch
+    const platform = detectPlatform(youtubeUrl);
+    if (!platform) {
+      return res.status(400).json({ error: 'Invalid stream URL. Provide a YouTube or Twitch link.' });
     }
 
     // Sanitize displayName
@@ -73,6 +74,7 @@ router.post('/', requireAuth, async (req, res) => {
         user_id: hostId,
         display_name: trimmedName,
         youtube_url: youtubeUrl,
+        platform,
         offset_seconds: 0,
         is_anchor: true,
       })
@@ -122,7 +124,7 @@ router.get('/join/:code', async (req, res) => {
 
     const { data: session, error } = await supabaseAdmin
       .from('sessions')
-      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, created_at, ended_at, vod_ready_at, streams!streams_session_id_fkey(id, display_name, user_id, youtube_url, offset_seconds, is_anchor, is_active, joined_at, left_at)')
+      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, created_at, ended_at, vod_ready_at, streams!streams_session_id_fkey(id, display_name, user_id, youtube_url, platform, offset_seconds, is_anchor, is_active, joined_at, left_at)')
       .eq('participant_link', code)
       .single();
 
@@ -146,7 +148,7 @@ router.get('/watch/:code', async (req, res) => {
 
     const { data: session, error } = await supabaseAdmin
       .from('sessions')
-      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, created_at, ended_at, vod_ready_at, streams!streams_session_id_fkey(id, display_name, user_id, youtube_url, offset_seconds, is_anchor, is_active, joined_at, left_at)')
+      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, created_at, ended_at, vod_ready_at, streams!streams_session_id_fkey(id, display_name, user_id, youtube_url, platform, offset_seconds, is_anchor, is_active, joined_at, left_at)')
       .eq('spectator_link', code)
       .single();
 
@@ -172,9 +174,10 @@ router.post('/:id/streams', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'youtubeUrl and displayName are required' });
     }
 
-    // Server-side YouTube URL validation
-    if (!extractYouTubeVideoId(youtubeUrl)) {
-      return res.status(400).json({ error: 'Invalid YouTube URL' });
+    // Server-side URL validation — accept YouTube or Twitch
+    const platform = detectPlatform(youtubeUrl);
+    if (!platform) {
+      return res.status(400).json({ error: 'Invalid stream URL. Provide a YouTube or Twitch link.' });
     }
 
     // Sanitize displayName
@@ -215,6 +218,7 @@ router.post('/:id/streams', requireAuth, async (req, res) => {
         user_id: req.supabaseUser.id,
         display_name: trimmedName,
         youtube_url: youtubeUrl,
+        platform,
         offset_seconds: 0,
         is_anchor: false,
       })

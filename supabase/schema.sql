@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS public.streams (
   user_id             uuid NOT NULL REFERENCES public.users(id),
   display_name        text NOT NULL,
   youtube_url         text NOT NULL,
+  platform            text DEFAULT 'youtube',  -- 'youtube' or 'twitch'
   offset_seconds      float DEFAULT 0,
   is_anchor           boolean DEFAULT false,
   youtube_start_time  float,   -- Unix timestamp (seconds) from YT IFrame API getVideoStartTime()
