@@ -26,6 +26,11 @@ export default function Viewer() {
   const [error, setError] = useState(null);
   const [ending, setEnding] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  const [addPovOpen, setAddPovOpen] = useState(false);
+  const [addPovUrl, setAddPovUrl] = useState('');
+  const [addPovDisplayName, setAddPovDisplayName] = useState('');
+  const [addPovSubmitting, setAddPovSubmitting] = useState(false);
+  const [addPovError, setAddPovError] = useState(null);
 
   // Modal state: { title, message, confirmLabel, onConfirm, variant, destructive }
   const [modal, setModal] = useState(null);
@@ -405,6 +410,7 @@ export default function Viewer() {
   ), [isVod, streams]);
   // true for the host AND for whoever the host has delegated controls to
   const hasControl = isHost || (!!controlHolderUserId && user?.id === controlHolderUserId);
+  const canAddPov = isHost && !isVod && visibleStreams.length < 5;
   const hostStream = visibleStreams.find((s) => s.user_id === session?.host_id);
   const hostName = hostStream?.display_name ?? hostStream?.users?.display_name ?? 'Host';
 
@@ -424,6 +430,28 @@ export default function Viewer() {
   // being recreated every time streams changes.
   const streamsRef = useRef(streams);
   useEffect(() => { streamsRef.current = visibleStreams; }, [visibleStreams]);
+
+  const renderAddPovTile = useCallback((wrapperClassName, buttonClassName, labelSizeClassName = 'text-xs') => (
+    <div className={wrapperClassName}>
+      <button
+        type="button"
+        onClick={openAddPovModal}
+        className={buttonClassName}
+      >
+        <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-pov-surface/95 via-pov-card/90 to-pov-surface/95">
+          <div className="flex flex-col items-center gap-2 px-3 text-center">
+            <div className="flex h-11 w-11 items-center justify-center rounded-full border border-dashed border-pov-accent/50 bg-pov-accent/10 text-xl font-semibold text-pov-accent">
+              +
+            </div>
+            <div>
+              <p className={`font-semibold text-pov-text ${labelSizeClassName}`}>Add POV</p>
+              <p className="text-[10px] text-pov-muted">Drop in another stream</p>
+            </div>
+          </div>
+        </div>
+      </button>
+    </div>
+  ), [openAddPovModal]);
 
   // Keep a ref to offsets so offset callbacks stay stable
   const offsetsRef = useRef(offsets);
@@ -581,6 +609,63 @@ export default function Viewer() {
   const toggleViewMode = useCallback(() => {
     setViewMode((mode) => (mode === 'wall' ? 'stage' : 'wall'));
   }, []);
+
+  const openAddPovModal = useCallback(() => {
+    if (!isHost || isVod) return;
+    setAddPovUrl('');
+    setAddPovDisplayName('');
+    setAddPovError(null);
+    setAddPovOpen(true);
+  }, [isHost, isVod]);
+
+  const closeAddPovModal = useCallback(() => {
+    if (addPovSubmitting) return;
+    setAddPovOpen(false);
+    setAddPovError(null);
+  }, [addPovSubmitting]);
+
+  const handleAddPov = useCallback(async (event) => {
+    event.preventDefault();
+
+    const streamUrl = addPovUrl.trim();
+    const displayName = addPovDisplayName.trim();
+
+    if (!streamUrl) {
+      setAddPovError('Enter a YouTube or Twitch URL.');
+      return;
+    }
+
+    try {
+      setAddPovSubmitting(true);
+      setAddPovError(null);
+
+      const token = await getAccessToken();
+      const response = await fetch(`/api/sessions/${sessionId}/streams`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token && { Authorization: `Bearer ${token}` }),
+        },
+        body: JSON.stringify({
+          streamUrl,
+          displayName,
+        }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to add POV');
+      }
+
+      setAddPovOpen(false);
+      setAddPovUrl('');
+      setAddPovDisplayName('');
+    } catch (err) {
+      setAddPovError(err.message || 'Failed to add POV');
+    } finally {
+      setAddPovSubmitting(false);
+    }
+  }, [addPovDisplayName, addPovUrl, getAccessToken, sessionId]);
 
   // ── OFFSET CONTROLS ────────────────────────────────────────────────────────
 
@@ -940,54 +1025,60 @@ export default function Viewer() {
 
       {viewMode === 'wall' ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-3 mb-2 sm:mb-3">
-          {visibleStreams.length > 0 ? (
-            visibleStreams.map((stream) => {
-              const isActive = stream.id === mainStreamId;
-              return (
-                <div key={`wall-wrap-${stream.id}`} className="flex flex-col gap-1">
-                  <button
-                    onClick={() => handleSwapStream(stream.id)}
-                    className={`relative aspect-video bg-black rounded-lg overflow-hidden border-2 transition-all ${
-                      isActive ? 'border-pov-accent shadow-lg shadow-pov-accent/20' : 'border-pov-border hover:border-pov-muted'
-                    }`}
-                  >
-                    <StreamPlayer
-                      streamUrl={stream.youtube_url}
-                      platform={stream.platform}
-                      isMain={stream.id === mainStreamId}
-                      onReady={(player) => {
-                        handlePlayerReady(stream.id, player);
-                        playerRefs.current[`film-${stream.id}`] = player;
-                      }}
-                      onStateChange={(state) => handleStageStateChange(stream.id, state)}
-                      className="w-full h-full"
-                    />
-                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/85 to-transparent px-3 py-2 pointer-events-none">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-semibold text-white truncate">{stream.display_name}</span>
-                        <StatusIndicators
-                          stream={stream}
-                          isHost={stream.user_id === session?.host_id}
-                          isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId}
-                        />
-                      </div>
-                    </div>
-                    {isActive && <div className="absolute top-0 left-0 right-0 h-0.5 bg-pov-accent" />}
-                  </button>
+          {visibleStreams.map((stream) => {
+            const isActive = stream.id === mainStreamId;
 
-                  {hasControl && !isVod && (
-                    <OffsetControls
-                      streamId={stream.id}
-                      isAnchor={stream.is_anchor}
-                      offset={offsets[stream.id] ?? 0}
-                      onStep={stepOffset}
-                      onPromoteAnchor={handlePromoteAnchor}
-                    />
-                  )}
-                </div>
-              );
-            })
-          ) : (
+            return (
+              <div key={`wall-wrap-${stream.id}`} className="flex flex-col gap-1">
+                <button
+                  onClick={() => handleSwapStream(stream.id)}
+                  className={`relative aspect-video bg-black rounded-lg overflow-hidden border-2 transition-all ${
+                    isActive ? 'border-pov-accent shadow-lg shadow-pov-accent/20' : 'border-pov-border hover:border-pov-muted'
+                  }`}
+                >
+                  <StreamPlayer
+                    streamUrl={stream.youtube_url}
+                    platform={stream.platform}
+                    isMain={stream.id === mainStreamId}
+                    onReady={(player) => {
+                      handlePlayerReady(stream.id, player);
+                      playerRefs.current[`film-${stream.id}`] = player;
+                    }}
+                    onStateChange={(state) => handleStageStateChange(stream.id, state)}
+                    className="w-full h-full"
+                  />
+                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/85 to-transparent px-3 py-2 pointer-events-none">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-white truncate">{stream.display_name}</span>
+                      <StatusIndicators
+                        stream={stream}
+                        isHost={stream.user_id === session?.host_id}
+                        isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId}
+                      />
+                    </div>
+                  </div>
+                  {isActive && <div className="absolute top-0 left-0 right-0 h-0.5 bg-pov-accent" />}
+                </button>
+
+                {hasControl && !isVod && (
+                  <OffsetControls
+                    streamId={stream.id}
+                    isAnchor={stream.is_anchor}
+                    offset={offsets[stream.id] ?? 0}
+                    onStep={stepOffset}
+                    onPromoteAnchor={handlePromoteAnchor}
+                  />
+                )}
+              </div>
+            );
+          })}
+
+          {canAddPov && renderAddPovTile(
+            'flex flex-col gap-1',
+            'relative aspect-video bg-black rounded-lg overflow-hidden border-2 border-dashed border-pov-accent/50 transition-all hover:border-pov-accent'
+          )}
+
+          {visibleStreams.length === 0 && !canAddPov && (
             <div className="col-span-full w-full h-40 flex items-center justify-center rounded-lg border border-dashed border-pov-border bg-pov-surface/50">
               <p className="text-pov-muted text-sm">Waiting for streams to join...</p>
             </div>
@@ -1047,63 +1138,66 @@ export default function Viewer() {
 
           {/* Filmstrip — thumbnails that mirror each player's live frame */}
           <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-2 sm:overflow-x-auto mb-2 pb-1">
-            {visibleStreams.length > 0 ? (
-              visibleStreams.map((stream) => {
-                const isActive = stream.id === mainStreamId;
-                return (
-                  <div key={`film-wrap-${stream.id}`} className="w-full sm:flex-shrink-0 sm:w-48 flex flex-col gap-1">
-                    {/* Thumbnail card */}
-                    <button
-                      onClick={() => handleSwapStream(stream.id)}
-                      className={`w-full rounded-lg border-2 transition-all overflow-hidden relative group ${
-                        isActive
-                          ? 'border-pov-accent shadow-lg shadow-pov-accent/20'
-                          : 'border-pov-border hover:border-pov-muted'
-                      }`}
-                    >
-                      <div className="aspect-video pointer-events-none">
-                        <StreamPlayer
-                          streamUrl={stream.youtube_url}
-                          platform={stream.platform}
-                          isMain={false}
-                          onReady={(player) => {
-                            playerRefs.current[`film-${stream.id}`] = player;
-                          }}
-                          className="w-full h-full"
+            {visibleStreams.map((stream) => {
+              const isActive = stream.id === mainStreamId;
+
+              return (
+                <div key={`film-wrap-${stream.id}`} className="w-full sm:flex-shrink-0 sm:w-48 flex flex-col gap-1">
+                  <button
+                    onClick={() => handleSwapStream(stream.id)}
+                    className={`w-full rounded-lg border-2 transition-all overflow-hidden relative group ${
+                      isActive
+                        ? 'border-pov-accent shadow-lg shadow-pov-accent/20'
+                        : 'border-pov-border hover:border-pov-muted'
+                    }`}
+                  >
+                    <div className="aspect-video pointer-events-none">
+                      <StreamPlayer
+                        streamUrl={stream.youtube_url}
+                        platform={stream.platform}
+                        isMain={false}
+                        onReady={(player) => {
+                          playerRefs.current[`film-${stream.id}`] = player;
+                        }}
+                        className="w-full h-full"
+                      />
+                    </div>
+                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-2 py-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-mono text-white truncate">
+                          {stream.display_name}
+                        </span>
+                        <StatusIndicators
+                          stream={stream}
+                          isHost={stream.user_id === session?.host_id}
+                          isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId}
                         />
                       </div>
-                      {/* Name + indicators overlay */}
-                      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-2 py-1.5">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-mono text-white truncate">
-                            {stream.display_name}
-                          </span>
-                          <StatusIndicators
-                            stream={stream}
-                            isHost={stream.user_id === session?.host_id}
-                            isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId}
-                          />
-                        </div>
-                      </div>
-                      {isActive && (
-                        <div className="absolute top-0 left-0 right-0 h-0.5 bg-pov-accent" />
-                      )}
-                    </button>
-
-                    {/* Per-stream offset controls — host or delegate, live only */}
-                    {hasControl && !isVod && (
-                      <OffsetControls
-                        streamId={stream.id}
-                        isAnchor={stream.is_anchor}
-                        offset={offsets[stream.id] ?? 0}
-                        onStep={stepOffset}
-                        onPromoteAnchor={handlePromoteAnchor}
-                      />
+                    </div>
+                    {isActive && (
+                      <div className="absolute top-0 left-0 right-0 h-0.5 bg-pov-accent" />
                     )}
-                  </div>
-                );
-              })
-            ) : (
+                  </button>
+
+                  {hasControl && !isVod && (
+                    <OffsetControls
+                      streamId={stream.id}
+                      isAnchor={stream.is_anchor}
+                      offset={offsets[stream.id] ?? 0}
+                      onStep={stepOffset}
+                      onPromoteAnchor={handlePromoteAnchor}
+                    />
+                  )}
+                </div>
+              );
+            })}
+
+            {canAddPov && renderAddPovTile(
+              'w-full sm:flex-shrink-0 sm:w-48 flex flex-col gap-1',
+              'relative w-full aspect-video rounded-lg border-2 border-dashed border-pov-accent/50 overflow-hidden transition-all hover:border-pov-accent'
+            )}
+
+            {visibleStreams.length === 0 && !canAddPov && (
               [...Array(4)].map((_, i) => (
                 <div
                   key={i}
@@ -1183,6 +1277,19 @@ export default function Viewer() {
       )}
 
       {/* Confirmation / alert modal */}
+      <AddPovModal
+        open={addPovOpen}
+        url={addPovUrl}
+        displayName={addPovDisplayName}
+        error={addPovError}
+        submitting={addPovSubmitting}
+        onUrlChange={setAddPovUrl}
+        onDisplayNameChange={setAddPovDisplayName}
+        onSubmit={handleAddPov}
+        onCancel={closeAddPovModal}
+      />
+
+      {/* Confirmation / alert modal */}
       <ConfirmModal
         open={!!modal}
         title={modal?.title}
@@ -1197,6 +1304,114 @@ export default function Viewer() {
         }}
         onCancel={() => setModal(null)}
       />
+    </div>
+  );
+}
+
+function AddPovModal({
+  open,
+  url,
+  displayName,
+  error,
+  submitting,
+  onUrlChange,
+  onDisplayNameChange,
+  onSubmit,
+  onCancel,
+}) {
+  const firstInputRef = useRef(null);
+
+  useEffect(() => {
+    if (open) firstInputRef.current?.focus();
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKey = (event) => {
+      if (event.key === 'Escape') onCancel?.();
+    };
+
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [open, onCancel]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4"
+      onClick={onCancel}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="add-pov-modal-title"
+    >
+      <form
+        className="w-full max-w-md rounded-xl border border-pov-border bg-pov-card p-5 sm:p-6 shadow-2xl space-y-4"
+        onSubmit={onSubmit}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="space-y-1">
+          <h2 id="add-pov-modal-title" className="text-lg font-bold font-mono text-pov-text">
+            Add another POV
+          </h2>
+          <p className="text-sm text-pov-muted">
+            Drop in a YouTube or Twitch link to add it to this session.
+          </p>
+        </div>
+
+        <label className="block space-y-1.5">
+          <span className="text-[10px] sm:text-xs font-mono text-pov-muted uppercase tracking-wider">
+            Stream URL
+          </span>
+          <input
+            ref={firstInputRef}
+            type="url"
+            value={url}
+            onChange={(event) => onUrlChange(event.target.value)}
+            placeholder="https://www.youtube.com/watch?v=..."
+            className="w-full rounded-lg border border-pov-border bg-pov-bg px-3 py-2 text-sm text-pov-text outline-none transition focus:border-pov-accent"
+            required
+          />
+        </label>
+
+        <label className="block space-y-1.5">
+          <span className="text-[10px] sm:text-xs font-mono text-pov-muted uppercase tracking-wider">
+            Label
+          </span>
+          <input
+            type="text"
+            value={displayName}
+            onChange={(event) => onDisplayNameChange(event.target.value)}
+            placeholder="POV 2"
+            maxLength={40}
+            className="w-full rounded-lg border border-pov-border bg-pov-bg px-3 py-2 text-sm text-pov-text outline-none transition focus:border-pov-accent"
+          />
+        </label>
+
+        {error && (
+          <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+            {error}
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-3 pt-1">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="px-4 py-2 rounded-lg text-sm font-medium text-pov-muted hover:text-pov-text transition"
+            disabled={submitting}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-pov-accent hover:opacity-90 text-white transition disabled:opacity-60"
+            disabled={submitting}
+          >
+            {submitting ? 'Adding...' : 'Add POV'}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

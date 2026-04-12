@@ -97,6 +97,7 @@ export default function JoinSession() {
   const activeStreams = session?.status === 'live'
     ? streams.filter((s) => s.is_active !== false)
     : streams;
+
   const alreadyJoined = user && activeStreams.some((s) => s.user_id === user.id);
 
   // If already joined, redirect straight to the viewer
@@ -307,7 +308,7 @@ export default function JoinSession() {
             <div>
               <h1 className="text-2xl font-bold font-mono mb-2">Join Session</h1>
               <p className="text-sm text-pov-muted max-w-lg">
-                Submit your stream URL (YouTube or Twitch) to join this session.
+                Submit your stream URL to join this session.
               </p>
             </div>
             <span className="hidden sm:inline-flex text-[10px] font-mono text-pov-muted bg-pov-bg border border-pov-border rounded-full px-3 py-1">
@@ -358,7 +359,6 @@ export default function JoinSession() {
               </label>
               <input
                 id="youtube-url"
-                type="url"
                 value={youtubeUrl}
                 onChange={(e) => setYoutubeUrl(e.target.value)}
                 placeholder="YouTube or Twitch stream URL"

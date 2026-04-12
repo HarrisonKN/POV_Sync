@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { supabaseAdmin } from '../lib/supabase.js';
 import { requireAuth } from '../lib/supabaseAuth.js';
-import { generateLinkCode, extractYouTubeVideoId, detectPlatform } from '../../../shared/helpers.js';
+import { generateLinkCode, detectPlatform } from '../../../shared/helpers.js';
 import * as syncManager from '../services/syncManager.js';
 import { broadcastToSession, setControlDelegation } from '../websocket/index.js';
 
@@ -19,24 +19,41 @@ router.param('id', (req, res, next, id) => {
 // POST /api/sessions — Create a new session
 router.post('/', requireAuth, async (req, res) => {
   try {
-    const { youtubeUrl, displayName } = req.body;
     const hostId = req.supabaseUser?.id;
 
-    if (!hostId || !youtubeUrl || !displayName) {
-      return res.status(400).json({ error: 'youtubeUrl and displayName are required' });
+    const rawEntries = Array.isArray(req.body.streams)
+      ? req.body.streams
+      : [{ youtubeUrl: req.body.youtubeUrl, displayName: req.body.displayName }];
+
+    if (!hostId || rawEntries.length === 0) {
+      return res.status(400).json({ error: 'At least one stream URL is required' });
     }
 
-    // Server-side URL validation — accept YouTube or Twitch
-    const platform = detectPlatform(youtubeUrl);
-    if (!platform) {
-      return res.status(400).json({ error: 'Invalid stream URL. Provide a YouTube or Twitch link.' });
+    const incomingStreams = rawEntries
+      .map((entry, index) => {
+        const youtubeUrl = String(entry?.youtubeUrl ?? entry?.streamUrl ?? '').trim();
+        const displayName = String(entry?.displayName ?? '').trim().slice(0, 40);
+        const label = displayName || `POV ${index + 1}`;
+        const platform = detectPlatform(youtubeUrl);
+        return { youtubeUrl, displayName: label, platform };
+      })
+      .filter((entry) => entry.youtubeUrl.length > 0);
+
+    if (incomingStreams.length === 0) {
+      return res.status(400).json({ error: 'At least one stream URL is required' });
     }
 
-    // Sanitize displayName
-    const trimmedName = String(displayName).trim().slice(0, 40);
-    if (trimmedName.length === 0) {
-      return res.status(400).json({ error: 'displayName cannot be empty' });
+    for (const entry of incomingStreams) {
+      if (!entry.platform) {
+        return res.status(400).json({ error: 'Invalid stream URL. Provide a YouTube or Twitch link.' });
+      }
     }
+
+    if (incomingStreams.length > 5) {
+      return res.status(400).json({ error: 'Session is full (max 5 streams for MVP)' });
+    }
+
+    const primaryStream = incomingStreams[0];
 
     console.log(`[API] POST /api/sessions — host=${hostId.slice(0, 8)}`);
 
@@ -72,9 +89,9 @@ router.post('/', requireAuth, async (req, res) => {
       .insert({
         session_id: session.id,
         user_id: hostId,
-        display_name: trimmedName,
-        youtube_url: youtubeUrl,
-        platform,
+        display_name: primaryStream.displayName,
+        youtube_url: primaryStream.youtubeUrl,
+        platform: primaryStream.platform,
         offset_seconds: 0,
         is_anchor: true,
       })
@@ -102,11 +119,37 @@ router.post('/', requireAuth, async (req, res) => {
 
     // Register stream with sync manager (lightweight — no audio pipeline)
     syncManager.startSession(session.id, (msg) => broadcastToSession(session.id, msg));
-    syncManager.addStream(session.id, stream.id, youtubeUrl, true);
+    syncManager.addStream(session.id, stream.id, primaryStream.youtubeUrl, true);
+
+    const extraStreams = [];
+    for (const entry of incomingStreams.slice(1)) {
+      const { data: extraStream, error: extraStreamError } = await db
+        .from('streams')
+        .insert({
+          session_id: session.id,
+          user_id: hostId,
+          display_name: entry.displayName,
+          youtube_url: entry.youtubeUrl,
+          platform: entry.platform,
+          offset_seconds: 0,
+          is_anchor: false,
+        })
+        .select()
+        .single();
+
+      if (extraStreamError) {
+        console.error('[API] Extra stream insert error:', extraStreamError);
+        throw extraStreamError;
+      }
+
+      extraStreams.push(extraStream);
+      syncManager.addStream(session.id, extraStream.id, entry.youtubeUrl, false);
+    }
 
     res.json({
       session: { ...session, anchor_stream_id: stream.id },
       stream,
+      streams: [stream, ...extraStreams],
       participantLink,
       spectatorLink,
     });
@@ -167,23 +210,35 @@ router.get('/watch/:code', async (req, res) => {
 router.post('/:id/streams', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { youtubeUrl, displayName } = req.body;
     const userId = req.supabaseUser?.id;
 
-    if (!userId || !youtubeUrl || !displayName) {
-      return res.status(400).json({ error: 'youtubeUrl and displayName are required' });
+    const rawEntries = Array.isArray(req.body.streams)
+      ? req.body.streams
+      : [{ youtubeUrl: req.body.youtubeUrl, displayName: req.body.displayName }];
+
+    if (!userId || rawEntries.length === 0) {
+      return res.status(400).json({ error: 'At least one stream URL is required' });
     }
 
-    // Server-side URL validation — accept YouTube or Twitch
-    const platform = detectPlatform(youtubeUrl);
-    if (!platform) {
-      return res.status(400).json({ error: 'Invalid stream URL. Provide a YouTube or Twitch link.' });
+    const incomingStreams = rawEntries
+      .map((entry, index) => {
+        const youtubeUrl = String(entry?.youtubeUrl ?? entry?.streamUrl ?? '').trim();
+        const displayName = String(entry?.displayName ?? '').trim().slice(0, 40);
+        const label = displayName || `POV ${index + 1}`;
+        const platform = detectPlatform(youtubeUrl);
+
+        return { youtubeUrl, displayName: label, platform };
+      })
+      .filter((entry) => entry.youtubeUrl.length > 0);
+
+    if (incomingStreams.length === 0) {
+      return res.status(400).json({ error: 'At least one stream URL is required' });
     }
 
-    // Sanitize displayName
-    const trimmedName = String(displayName).trim().slice(0, 40);
-    if (trimmedName.length === 0) {
-      return res.status(400).json({ error: 'displayName cannot be empty' });
+    for (const entry of incomingStreams) {
+      if (!entry.platform) {
+        return res.status(400).json({ error: 'Invalid stream URL. Provide a YouTube or Twitch link.' });
+      }
     }
 
     // Use unauthenticated client for reads (SELECT policies allow public read)
@@ -205,33 +260,38 @@ router.post('/:id/streams', requireAuth, async (req, res) => {
       .select('*', { count: 'exact', head: true })
       .eq('session_id', id);
 
-    if (count >= 5) {
+    if ((count ?? 0) + incomingStreams.length > 5) {
       return res.status(400).json({ error: 'Session is full (max 5 streams for MVP)' });
     }
 
     // Use authenticated client for INSERT (RLS: auth.uid() = user_id)
     const db = req.supabase;
-    const { data: stream, error: streamError } = await db
-      .from('streams')
-      .insert({
-        session_id: id,
-        user_id: req.supabaseUser.id,
-        display_name: trimmedName,
-        youtube_url: youtubeUrl,
-        platform,
-        offset_seconds: 0,
-        is_anchor: false,
-      })
-      .select()
-      .single();
 
-    if (streamError) throw streamError;
-
-    // Register stream with sync manager (lightweight — no audio pipeline)
+    const insertedStreams = [];
     syncManager.startSession(id, (msg) => broadcastToSession(id, msg));
-    syncManager.addStream(id, stream.id, youtubeUrl, false);
 
-    res.json({ stream });
+    for (const entry of incomingStreams) {
+      const { data: stream, error: streamError } = await db
+        .from('streams')
+        .insert({
+          session_id: id,
+          user_id: req.supabaseUser.id,
+          display_name: entry.displayName,
+          youtube_url: entry.youtubeUrl,
+          platform: entry.platform,
+          offset_seconds: 0,
+          is_anchor: false,
+        })
+        .select()
+        .single();
+
+      if (streamError) throw streamError;
+
+      insertedStreams.push(stream);
+      syncManager.addStream(id, stream.id, entry.youtubeUrl, false);
+    }
+
+    res.json({ stream: insertedStreams[0], streams: insertedStreams });
   } catch (err) {
     console.error('Error adding stream:', err);
     res.status(500).json({ error: 'Failed to add stream' });
