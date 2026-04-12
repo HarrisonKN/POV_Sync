@@ -43,7 +43,7 @@ export default function Profile() {
 
         const { data: hosted } = await supabase
           .from('sessions')
-          .select('*, streams(id, display_name, user_id, is_active, left_at, users(avatar_url, display_name))')
+          .select('*, streams!streams_session_id_fkey(id, display_name, user_id, is_active, left_at, users(avatar_url, display_name))')
           .eq('host_id', targetUserId)
           .order('created_at', { ascending: false });
         setHostedSessions(hosted || []);
@@ -57,7 +57,7 @@ export default function Profile() {
           const sessionIds = [...new Set(streamRows.map((s) => s.session_id))];
           const { data: participated } = await supabase
             .from('sessions')
-            .select('*, streams(id, display_name, user_id, is_active, left_at, users(avatar_url, display_name))')
+            .select('*, streams!streams_session_id_fkey(id, display_name, user_id, is_active, left_at, users(avatar_url, display_name))')
             .in('id', sessionIds)
             .order('created_at', { ascending: false });
           setParticipatedSessions(participated || []);

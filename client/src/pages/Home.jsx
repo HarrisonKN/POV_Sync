@@ -71,7 +71,7 @@ export default function Home() {
 
         const { data: hosted } = await supabase
           .from('sessions')
-          .select('id, status, created_at, ended_at, host_id, streams(id, display_name, user_id, youtube_url, is_active, left_at, users(avatar_url, display_name))')
+          .select('id, status, created_at, ended_at, host_id, streams!streams_session_id_fkey(id, display_name, user_id, youtube_url, is_active, left_at, users(avatar_url, display_name))')
           .eq('host_id', user.id)
           .order('created_at', { ascending: false })
           .limit(10);
@@ -86,7 +86,7 @@ export default function Home() {
           const ids = [...new Set(streamRows.map((s) => s.session_id))];
           const { data } = await supabase
             .from('sessions')
-            .select('id, status, created_at, ended_at, host_id, streams(id, display_name, user_id, youtube_url, is_active, left_at, users(avatar_url, display_name))')
+            .select('id, status, created_at, ended_at, host_id, streams!streams_session_id_fkey(id, display_name, user_id, youtube_url, is_active, left_at, users(avatar_url, display_name))')
             .in('id', ids)
             .order('created_at', { ascending: false })
             .limit(10);

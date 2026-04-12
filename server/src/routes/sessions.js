@@ -122,7 +122,7 @@ router.get('/join/:code', async (req, res) => {
 
     const { data: session, error } = await supabaseAdmin
       .from('sessions')
-      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, created_at, ended_at, vod_ready_at, streams(id, display_name, user_id, youtube_url, offset_seconds, is_anchor, is_active, joined_at, left_at)')
+      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, created_at, ended_at, vod_ready_at, streams!streams_session_id_fkey(id, display_name, user_id, youtube_url, offset_seconds, is_anchor, is_active, joined_at, left_at)')
       .eq('participant_link', code)
       .single();
 
@@ -146,7 +146,7 @@ router.get('/watch/:code', async (req, res) => {
 
     const { data: session, error } = await supabaseAdmin
       .from('sessions')
-      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, created_at, ended_at, vod_ready_at, streams(id, display_name, user_id, youtube_url, offset_seconds, is_anchor, is_active, joined_at, left_at)')
+      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, created_at, ended_at, vod_ready_at, streams!streams_session_id_fkey(id, display_name, user_id, youtube_url, offset_seconds, is_anchor, is_active, joined_at, left_at)')
       .eq('spectator_link', code)
       .single();
 

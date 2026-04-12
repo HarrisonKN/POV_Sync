@@ -30,7 +30,7 @@ export function useActiveSession() {
         // 1) Find sessions user hosts that are live
         const { data: hosted } = await supabase
           .from('sessions')
-          .select('id, host_id, streams(id, display_name)')
+          .select('id, host_id, streams!streams_session_id_fkey(id, display_name)')
           .eq('host_id', user.id)
           .eq('status', 'live')
           .limit(1);
@@ -44,7 +44,7 @@ export function useActiveSession() {
         // 2) Find sessions user participates in that are live
         const { data: streamRows } = await supabase
           .from('streams')
-          .select('session_id, sessions!inner(id, status, host_id, streams(id, display_name))')
+          .select('session_id, sessions!inner(id, status, host_id, streams!streams_session_id_fkey(id, display_name))')
           .eq('user_id', user.id)
           .eq('sessions.status', 'live')
           .limit(1);
