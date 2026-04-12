@@ -9,6 +9,12 @@ import ConfirmModal from '../components/ConfirmModal';
 import SessionRoomHeader from '../components/SessionRoomHeader';
 import { OFFSET_STEPS } from '../../../shared/constants.js';
 
+const WALL_TILE_SIZES = {
+  sm: 220,
+  md: 300,
+  lg: 380,
+};
+
 export default function Viewer() {
   const { sessionId } = useParams();
   const navigate = useNavigate();
@@ -26,6 +32,13 @@ export default function Viewer() {
   const [error, setError] = useState(null);
   const [ending, setEnding] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  const [wallTileSize, setWallTileSize] = useState(() => {
+    try {
+      return localStorage.getItem('povsync.wallTileSize') || 'md';
+    } catch (_) {
+      return 'md';
+    }
+  });
   const [addPovOpen, setAddPovOpen] = useState(false);
   const [addPovUrl, setAddPovUrl] = useState('');
   const [addPovDisplayName, setAddPovDisplayName] = useState('');
@@ -46,6 +59,12 @@ export default function Viewer() {
 
   // Anchor-dead banner: set when server broadcasts ANCHOR_REMOVED
   const [anchorDeadBanner, setAnchorDeadBanner] = useState(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('povsync.wallTileSize', wallTileSize);
+    } catch (_) {}
+  }, [wallTileSize]);
 
   // Player refs keyed by streamId (stage) and "film-<streamId>" (filmstrip)
   const playerRefs = useRef({});
@@ -414,6 +433,7 @@ export default function Viewer() {
   const nextPovLabel = `POV ${visibleStreams.length + 1}`;
   const hostStream = visibleStreams.find((s) => s.user_id === session?.host_id);
   const hostName = hostStream?.display_name ?? hostStream?.users?.display_name ?? 'Host';
+  const wallTileMinWidth = WALL_TILE_SIZES[wallTileSize] ?? WALL_TILE_SIZES.md;
 
   // Derive a display-ready syncStats object.
   // Once the WebSocket sends a SYNC_OFFSETS message syncStats is populated with real data.
@@ -975,6 +995,34 @@ export default function Viewer() {
           {viewMode === 'wall' ? 'Stage view' : 'Wall view'}
         </button>
 
+        {viewMode === 'wall' && (
+          <div className="flex items-center gap-1 rounded-lg border border-pov-border bg-pov-surface p-1">
+            {[
+              { key: 'sm', label: 'S' },
+              { key: 'md', label: 'M' },
+              { key: 'lg', label: 'L' },
+            ].map((option) => {
+              const active = wallTileSize === option.key;
+              return (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => setWallTileSize(option.key)}
+                  className={`h-7 min-w-7 px-2 rounded text-[10px] font-mono transition-colors ${
+                    active
+                      ? 'bg-pov-accent text-white'
+                      : 'text-pov-muted hover:text-pov-text hover:bg-pov-border/30'
+                  }`}
+                  aria-label={`Set wall tile size ${option.label}`}
+                  title={`Wall size ${option.label}`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {isHost && session?.status === 'live' && (
           <button
             onClick={handleEndSession}
@@ -1025,7 +1073,10 @@ export default function Viewer() {
       )}
 
       {viewMode === 'wall' ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-3 mb-2 sm:mb-3">
+        <div
+          className="grid gap-2 sm:gap-3 mb-2 sm:mb-3"
+          style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${wallTileMinWidth}px, 1fr))` }}
+        >
           {visibleStreams.map((stream) => {
             const isActive = stream.id === mainStreamId;
 
