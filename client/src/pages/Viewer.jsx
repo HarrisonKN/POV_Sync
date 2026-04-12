@@ -431,28 +431,6 @@ export default function Viewer() {
   const streamsRef = useRef(streams);
   useEffect(() => { streamsRef.current = visibleStreams; }, [visibleStreams]);
 
-  const renderAddPovTile = useCallback((wrapperClassName, buttonClassName, labelSizeClassName = 'text-xs') => (
-    <div className={wrapperClassName}>
-      <button
-        type="button"
-        onClick={openAddPovModal}
-        className={buttonClassName}
-      >
-        <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-pov-surface/95 via-pov-card/90 to-pov-surface/95">
-          <div className="flex flex-col items-center gap-2 px-3 text-center">
-            <div className="flex h-11 w-11 items-center justify-center rounded-full border border-dashed border-pov-accent/50 bg-pov-accent/10 text-xl font-semibold text-pov-accent">
-              +
-            </div>
-            <div>
-              <p className={`font-semibold text-pov-text ${labelSizeClassName}`}>Add POV</p>
-              <p className="text-[10px] text-pov-muted">Drop in another stream</p>
-            </div>
-          </div>
-        </div>
-      </button>
-    </div>
-  ), [openAddPovModal]);
-
   // Keep a ref to offsets so offset callbacks stay stable
   const offsetsRef = useRef(offsets);
   useEffect(() => { offsetsRef.current = offsets; }, [offsets]);
@@ -666,6 +644,28 @@ export default function Viewer() {
       setAddPovSubmitting(false);
     }
   }, [addPovDisplayName, addPovUrl, getAccessToken, sessionId]);
+
+  const renderAddPovTile = useCallback((wrapperClassName, buttonClassName, labelSizeClassName = 'text-xs') => (
+    <div className={wrapperClassName}>
+      <button
+        type="button"
+        onClick={openAddPovModal}
+        className={buttonClassName}
+      >
+        <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-pov-surface/95 via-pov-card/90 to-pov-surface/95">
+          <div className="flex flex-col items-center gap-2 px-3 text-center">
+            <div className="flex h-11 w-11 items-center justify-center rounded-full border border-dashed border-pov-accent/50 bg-pov-accent/10 text-xl font-semibold text-pov-accent">
+              +
+            </div>
+            <div>
+              <p className={`font-semibold text-pov-text ${labelSizeClassName}`}>Add POV</p>
+              <p className="text-[10px] text-pov-muted">Drop in another stream</p>
+            </div>
+          </div>
+        </div>
+      </button>
+    </div>
+  ), [openAddPovModal]);
 
   // ── OFFSET CONTROLS ────────────────────────────────────────────────────────
 
