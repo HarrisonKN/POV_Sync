@@ -9,11 +9,9 @@ import ConfirmModal from '../components/ConfirmModal';
 import SessionRoomHeader from '../components/SessionRoomHeader';
 import { OFFSET_STEPS } from '../../../shared/constants.js';
 
-const WALL_TILE_SIZES = {
-  sm: 220,
-  md: 300,
-  lg: 380,
-};
+const WALL_TILE_MIN_WIDTH = 180;
+const WALL_TILE_MAX_WIDTH = 560;
+const WALL_TILE_DEFAULT_WIDTH = 300;
 
 export default function Viewer() {
   const { sessionId } = useParams();
@@ -32,11 +30,12 @@ export default function Viewer() {
   const [error, setError] = useState(null);
   const [ending, setEnding] = useState(false);
   const [leaving, setLeaving] = useState(false);
-  const [wallTileSize, setWallTileSize] = useState(() => {
+  const [wallTileWidth, setWallTileWidth] = useState(() => {
     try {
-      return localStorage.getItem('povsync.wallTileSize') || 'md';
+      const saved = Number(localStorage.getItem('povsync.wallTileWidth'));
+      return Number.isFinite(saved) && saved > 0 ? saved : WALL_TILE_DEFAULT_WIDTH;
     } catch (_) {
-      return 'md';
+      return WALL_TILE_DEFAULT_WIDTH;
     }
   });
   const [addPovOpen, setAddPovOpen] = useState(false);
@@ -62,9 +61,9 @@ export default function Viewer() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('povsync.wallTileSize', wallTileSize);
+      localStorage.setItem('povsync.wallTileWidth', String(wallTileWidth));
     } catch (_) {}
-  }, [wallTileSize]);
+  }, [wallTileWidth]);
 
   // Player refs keyed by streamId (stage) and "film-<streamId>" (filmstrip)
   const playerRefs = useRef({});
@@ -433,7 +432,7 @@ export default function Viewer() {
   const nextPovLabel = `POV ${visibleStreams.length + 1}`;
   const hostStream = visibleStreams.find((s) => s.user_id === session?.host_id);
   const hostName = hostStream?.display_name ?? hostStream?.users?.display_name ?? 'Host';
-  const wallTileMinWidth = WALL_TILE_SIZES[wallTileSize] ?? WALL_TILE_SIZES.md;
+  const wallTileMinWidth = Math.min(Math.max(wallTileWidth, WALL_TILE_MIN_WIDTH), WALL_TILE_MAX_WIDTH);
 
   // Derive a display-ready syncStats object.
   // Once the WebSocket sends a SYNC_OFFSETS message syncStats is populated with real data.
@@ -952,7 +951,7 @@ export default function Viewer() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4">
+    <div className={viewMode === 'wall' ? 'w-full px-3 sm:px-4 py-3 sm:py-4' : 'max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4'}>
       <SessionRoomHeader
         title="Live room"
         session={session}
@@ -996,30 +995,21 @@ export default function Viewer() {
         </button>
 
         {viewMode === 'wall' && (
-          <div className="flex items-center gap-1 rounded-lg border border-pov-border bg-pov-surface p-1">
-            {[
-              { key: 'sm', label: 'S' },
-              { key: 'md', label: 'M' },
-              { key: 'lg', label: 'L' },
-            ].map((option) => {
-              const active = wallTileSize === option.key;
-              return (
-                <button
-                  key={option.key}
-                  type="button"
-                  onClick={() => setWallTileSize(option.key)}
-                  className={`h-7 min-w-7 px-2 rounded text-[10px] font-mono transition-colors ${
-                    active
-                      ? 'bg-pov-accent text-white'
-                      : 'text-pov-muted hover:text-pov-text hover:bg-pov-border/30'
-                  }`}
-                  aria-label={`Set wall tile size ${option.label}`}
-                  title={`Wall size ${option.label}`}
-                >
-                  {option.label}
-                </button>
-              );
-            })}
+          <div className="flex min-w-[190px] flex-1 items-center gap-2 rounded-lg border border-pov-border bg-pov-surface px-3 py-2">
+            <span className="text-[10px] sm:text-xs font-mono text-pov-muted whitespace-nowrap">Tile size</span>
+            <input
+              type="range"
+              min={WALL_TILE_MIN_WIDTH}
+              max={WALL_TILE_MAX_WIDTH}
+              step="20"
+              value={wallTileWidth}
+              onChange={(event) => setWallTileWidth(Number(event.target.value))}
+              className="w-28 sm:w-40 accent-pov-accent"
+              aria-label="Set wall tile width"
+            />
+            <span className="w-12 text-right text-[10px] sm:text-xs font-mono text-pov-text tabular-nums">
+              {wallTileWidth}px
+            </span>
           </div>
         )}
 
