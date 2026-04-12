@@ -11,6 +11,7 @@ export default function Spectator() {
   const [session, setSession] = useState(null);
   const [streams, setStreams] = useState([]);
   const [mainStreamId, setMainStreamId] = useState(null);
+  const [viewMode, setViewMode] = useState('stage');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [syncStats, setSyncStats] = useState(null);
@@ -295,6 +296,13 @@ export default function Spectator() {
         <span className="text-xs text-pov-muted font-mono">
           {visibleStreams.length} stream{visibleStreams.length !== 1 ? 's' : ''}
         </span>
+        <button
+          type="button"
+          onClick={() => setViewMode((mode) => (mode === 'stage' ? 'wall' : 'stage'))}
+          className="ml-auto text-[10px] sm:text-xs font-mono bg-pov-surface border border-pov-border rounded px-2 py-1 text-pov-muted hover:text-pov-accent hover:border-pov-accent transition-colors"
+        >
+          {viewMode === 'stage' ? 'Wall view' : 'Stage view'}
+        </button>
       </div>
 
       {session?.status === 'live' && syncStats && (
@@ -312,109 +320,156 @@ export default function Spectator() {
         </div>
       )}
 
-      {/* Main Stage — all players stacked, only selected visible */}
-      <div className="aspect-video bg-black border border-pov-border rounded-lg mb-2 sm:mb-3 overflow-hidden relative">
-        {visibleStreams.length > 0 ? (
-          visibleStreams.map((stream) => (
-            <div
-              key={`stage-${stream.id}`}
-              className={`absolute inset-0 transition-opacity duration-200 ${
-                stream.id === mainStreamId ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'
-              }`}
-            >
-              <StreamPlayer
-                streamUrl={stream.youtube_url}
-                platform={stream.platform}
-                isMain={stream.id === mainStreamId}
-                onReady={(player) => handlePlayerReady(stream.id, player)}
-                onStateChange={(state) => handleStageStateChange(stream.id, state)}
-                className="w-full h-full"
-              />
-              {stream.id === mainStreamId && (
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-4 py-3 pointer-events-none">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-white">{stream.display_name}</span>
-                    <StatusIndicators
-                      stream={stream}
-                      isHost={stream.user_id === session?.host_id}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-          ))
-        ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <div className="text-center">
-              <p className="text-pov-muted text-sm">Waiting for streams to join...</p>
-              <div className="mt-3 flex gap-2 justify-center">
-                {[...Array(5)].map((_, i) => (
-                  <div
-                    key={i}
-                    className="w-3 h-3 bg-pov-border rounded-full animate-pulse"
-                    style={{ animationDelay: `${i * 150}ms` }}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Filmstrip — live mini-players, click to swap */}
-      <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-2 sm:overflow-x-auto pb-2">
-        {visibleStreams.length > 0 ? (
-          visibleStreams.map((stream) => {
-            const isActive = stream.id === mainStreamId;
-            return (
-              <button
-                key={`film-${stream.id}`}
-                onClick={() => handleSwapStream(stream.id)}
-                className={`w-full sm:flex-shrink-0 sm:w-48 rounded-lg border-2 transition-all overflow-hidden relative group ${
-                  isActive
-                    ? 'border-pov-accent shadow-lg shadow-pov-accent/20'
-                    : 'border-pov-border hover:border-pov-muted'
-                }`}
-              >
-                <div className="aspect-video pointer-events-none">
+      {viewMode === 'wall' ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-3 mb-2 sm:mb-3">
+          {visibleStreams.length > 0 ? (
+            visibleStreams.map((stream) => {
+              const isActive = stream.id === mainStreamId;
+              return (
+                <button
+                  key={`wall-${stream.id}`}
+                  onClick={() => handleSwapStream(stream.id)}
+                  className={`relative aspect-video bg-black rounded-lg overflow-hidden border-2 transition-all ${
+                    isActive ? 'border-pov-accent shadow-lg shadow-pov-accent/20' : 'border-pov-border hover:border-pov-muted'
+                  }`}
+                >
                   <StreamPlayer
                     streamUrl={stream.youtube_url}
                     platform={stream.platform}
-                    isMain={false}
+                    isMain={stream.id === mainStreamId}
                     onReady={(player) => {
+                      handlePlayerReady(stream.id, player);
                       playerRefs.current[`film-${stream.id}`] = player;
                     }}
+                    onStateChange={(state) => handleStageStateChange(stream.id, state)}
                     className="w-full h-full"
                   />
+                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/85 to-transparent px-3 py-2 pointer-events-none">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-white truncate">{stream.display_name}</span>
+                      <StatusIndicators
+                        stream={stream}
+                        isHost={stream.user_id === session?.host_id}
+                      />
+                    </div>
+                  </div>
+                  {isActive && <div className="absolute top-0 left-0 right-0 h-0.5 bg-pov-accent" />}
+                </button>
+              );
+            })
+          ) : (
+            <div className="col-span-full w-full h-40 flex items-center justify-center rounded-lg border border-dashed border-pov-border bg-pov-surface/50">
+              <p className="text-pov-muted text-sm">Waiting for streams to join...</p>
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
+          {/* Main Stage — all players stacked, only selected visible */}
+          <div className="aspect-video bg-black border border-pov-border rounded-lg mb-2 sm:mb-3 overflow-hidden relative">
+            {visibleStreams.length > 0 ? (
+              visibleStreams.map((stream) => (
+                <div
+                  key={`stage-${stream.id}`}
+                  className={`absolute inset-0 transition-opacity duration-200 ${
+                    stream.id === mainStreamId ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'
+                  }`}
+                >
+                  <StreamPlayer
+                    streamUrl={stream.youtube_url}
+                    platform={stream.platform}
+                    isMain={stream.id === mainStreamId}
+                    onReady={(player) => handlePlayerReady(stream.id, player)}
+                    onStateChange={(state) => handleStageStateChange(stream.id, state)}
+                    className="w-full h-full"
+                  />
+                  {stream.id === mainStreamId && (
+                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-4 py-3 pointer-events-none">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-white">{stream.display_name}</span>
+                        <StatusIndicators
+                          stream={stream}
+                          isHost={stream.user_id === session?.host_id}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-2 py-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-mono text-white truncate">
-                      {stream.display_name}
-                    </span>
-                    <StatusIndicators
-                      stream={stream}
-                      isHost={stream.user_id === session?.host_id}
-                    />
+              ))
+            ) : (
+              <div className="w-full h-full flex items-center justify-center">
+                <div className="text-center">
+                  <p className="text-pov-muted text-sm">Waiting for streams to join...</p>
+                  <div className="mt-3 flex gap-2 justify-center">
+                    {[...Array(5)].map((_, i) => (
+                      <div
+                        key={i}
+                        className="w-3 h-3 bg-pov-border rounded-full animate-pulse"
+                        style={{ animationDelay: `${i * 150}ms` }}
+                      />
+                    ))}
                   </div>
                 </div>
-                {isActive && (
-                  <div className="absolute top-0 left-0 right-0 h-0.5 bg-pov-accent" />
-                )}
-              </button>
-            );
-          })
-        ) : (
-          [...Array(5)].map((_, i) => (
-            <div
-              key={i}
-              className="flex-shrink-0 w-48 aspect-video rounded-lg border border-dashed border-pov-border bg-pov-surface/50 animate-pulse flex items-center justify-center"
-            >
-              <span className="text-[10px] text-pov-muted/40 font-mono">POV {i + 1}</span>
-            </div>
-          ))
-        )}
-      </div>
+              </div>
+            )}
+          </div>
+
+          {/* Filmstrip — live mini-players, click to swap */}
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-2 sm:overflow-x-auto pb-2">
+            {visibleStreams.length > 0 ? (
+              visibleStreams.map((stream) => {
+                const isActive = stream.id === mainStreamId;
+                return (
+                  <button
+                    key={`film-${stream.id}`}
+                    onClick={() => handleSwapStream(stream.id)}
+                    className={`w-full sm:flex-shrink-0 sm:w-48 rounded-lg border-2 transition-all overflow-hidden relative group ${
+                      isActive
+                        ? 'border-pov-accent shadow-lg shadow-pov-accent/20'
+                        : 'border-pov-border hover:border-pov-muted'
+                    }`}
+                  >
+                    <div className="aspect-video pointer-events-none">
+                      <StreamPlayer
+                        streamUrl={stream.youtube_url}
+                        platform={stream.platform}
+                        isMain={false}
+                        onReady={(player) => {
+                          playerRefs.current[`film-${stream.id}`] = player;
+                        }}
+                        className="w-full h-full"
+                      />
+                    </div>
+                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-2 py-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-mono text-white truncate">
+                          {stream.display_name}
+                        </span>
+                        <StatusIndicators
+                          stream={stream}
+                          isHost={stream.user_id === session?.host_id}
+                        />
+                      </div>
+                    </div>
+                    {isActive && (
+                      <div className="absolute top-0 left-0 right-0 h-0.5 bg-pov-accent" />
+                    )}
+                  </button>
+                );
+              })
+            ) : (
+              [...Array(5)].map((_, i) => (
+                <div
+                  key={i}
+                  className="flex-shrink-0 w-48 aspect-video rounded-lg border border-dashed border-pov-border bg-pov-surface/50 animate-pulse flex items-center justify-center"
+                >
+                  <span className="text-[10px] text-pov-muted/40 font-mono">POV {i + 1}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

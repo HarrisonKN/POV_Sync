@@ -21,6 +21,7 @@ export default function Viewer() {
   const [session, setSession] = useState(null);
   const [streams, setStreams] = useState([]);
   const [mainStreamId, setMainStreamId] = useState(null);
+  const [viewMode, setViewMode] = useState('stage');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [ending, setEnding] = useState(false);
@@ -577,6 +578,10 @@ export default function Viewer() {
     setMainStreamId(newStreamId);
   }, [mainStreamId]);
 
+  const toggleViewMode = useCallback(() => {
+    setViewMode((mode) => (mode === 'wall' ? 'stage' : 'wall'));
+  }, []);
+
   // ── OFFSET CONTROLS ────────────────────────────────────────────────────────
 
   // Save a stream's offset to Supabase (debounced 800ms to avoid DB spam)
@@ -876,6 +881,14 @@ export default function Viewer() {
           )}
         </div>
 
+        <button
+          type="button"
+          onClick={toggleViewMode}
+          className="text-[10px] sm:text-xs font-mono bg-pov-surface border border-pov-border text-pov-text hover:bg-pov-border/30 rounded px-2 sm:px-3 py-1.5 transition-colors flex-shrink-0"
+        >
+          {viewMode === 'wall' ? 'Stage view' : 'Wall view'}
+        </button>
+
         {isHost && session?.status === 'live' && (
           <button
             onClick={handleEndSession}
@@ -925,125 +938,184 @@ export default function Viewer() {
         />
       )}
 
-      {/* Main Stage — shows the selected stream's player */}
-      <div className="aspect-video bg-black border border-pov-border rounded-lg mb-2 sm:mb-3 overflow-hidden relative">
-        {visibleStreams.length > 0 ? (
-          visibleStreams.map((stream) => (
-            <div
-              key={`stage-${stream.id}`}
-              className={`absolute inset-0 transition-opacity duration-200 ${
-                stream.id === mainStreamId ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'
-              }`}
-            >
-              <StreamPlayer
-                streamUrl={stream.youtube_url}
-                platform={stream.platform}
-                isMain={stream.id === mainStreamId}
-                onReady={(player) => handlePlayerReady(stream.id, player)}
-                onStateChange={(state) => handleStageStateChange(stream.id, state)}
-                className="w-full h-full"
-              />
-              {/* Main stage name overlay */}
-              {stream.id === mainStreamId && (
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-4 py-3 pointer-events-none">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-white">{stream.display_name}</span>
-                    <StatusIndicators
-                      stream={stream}
-                      isHost={stream.user_id === session?.host_id}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-          ))
-        ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <div className="text-center">
-              <p className="text-pov-muted text-sm">Waiting for streams to join...</p>
-              <div className="mt-3 flex gap-2 justify-center">
-                {[...Array(5)].map((_, i) => (
-                  <div
-                    key={i}
-                    className="w-3 h-3 bg-pov-border rounded-full animate-pulse"
-                    style={{ animationDelay: `${i * 150}ms` }}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Filmstrip — thumbnails that mirror each player's live frame */}
-      <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-2 sm:overflow-x-auto mb-2 pb-1">
-        {visibleStreams.length > 0 ? (
-          visibleStreams.map((stream) => {
-            const isActive = stream.id === mainStreamId;
-            return (
-              <div key={`film-wrap-${stream.id}`} className="w-full sm:flex-shrink-0 sm:w-48 flex flex-col gap-1">
-                {/* Thumbnail card */}
-                <button
-                  onClick={() => handleSwapStream(stream.id)}
-                  className={`w-full rounded-lg border-2 transition-all overflow-hidden relative group ${
-                    isActive
-                      ? 'border-pov-accent shadow-lg shadow-pov-accent/20'
-                      : 'border-pov-border hover:border-pov-muted'
-                  }`}
-                >
-                  <div className="aspect-video pointer-events-none">
+      {viewMode === 'wall' ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-3 mb-2 sm:mb-3">
+          {visibleStreams.length > 0 ? (
+            visibleStreams.map((stream) => {
+              const isActive = stream.id === mainStreamId;
+              return (
+                <div key={`wall-wrap-${stream.id}`} className="flex flex-col gap-1">
+                  <button
+                    onClick={() => handleSwapStream(stream.id)}
+                    className={`relative aspect-video bg-black rounded-lg overflow-hidden border-2 transition-all ${
+                      isActive ? 'border-pov-accent shadow-lg shadow-pov-accent/20' : 'border-pov-border hover:border-pov-muted'
+                    }`}
+                  >
                     <StreamPlayer
                       streamUrl={stream.youtube_url}
                       platform={stream.platform}
-                      isMain={false}
+                      isMain={stream.id === mainStreamId}
                       onReady={(player) => {
+                        handlePlayerReady(stream.id, player);
                         playerRefs.current[`film-${stream.id}`] = player;
                       }}
+                      onStateChange={(state) => handleStageStateChange(stream.id, state)}
                       className="w-full h-full"
                     />
-                  </div>
-                  {/* Name + indicators overlay */}
-                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-2 py-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-mono text-white truncate">
-                        {stream.display_name}
-                      </span>
-                      <StatusIndicators
-                        stream={stream}
-                        isHost={stream.user_id === session?.host_id}
-                        isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId}
-                      />
+                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/85 to-transparent px-3 py-2 pointer-events-none">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-white truncate">{stream.display_name}</span>
+                        <StatusIndicators
+                          stream={stream}
+                          isHost={stream.user_id === session?.host_id}
+                          isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId}
+                        />
+                      </div>
                     </div>
-                  </div>
-                  {isActive && (
-                    <div className="absolute top-0 left-0 right-0 h-0.5 bg-pov-accent" />
-                  )}
-                </button>
+                    {isActive && <div className="absolute top-0 left-0 right-0 h-0.5 bg-pov-accent" />}
+                  </button>
 
-                {/* Per-stream offset controls — host or delegate, live only */}
-                {hasControl && !isVod && (
-                  <OffsetControls
-                    streamId={stream.id}
-                    isAnchor={stream.is_anchor}
-                    offset={offsets[stream.id] ?? 0}
-                    onStep={stepOffset}
-                    onPromoteAnchor={handlePromoteAnchor}
-                  />
-                )}
-              </div>
-            );
-          })
-        ) : (
-          [...Array(4)].map((_, i) => (
-            <div
-              key={i}
-              className="w-full sm:flex-shrink-0 sm:w-48 aspect-video rounded-lg border border-dashed border-pov-border bg-pov-surface/50 animate-pulse flex items-center justify-center"
-            >
-              <span className="text-[10px] text-pov-muted/40 font-mono">POV {i + 1}</span>
+                  {hasControl && !isVod && (
+                    <OffsetControls
+                      streamId={stream.id}
+                      isAnchor={stream.is_anchor}
+                      offset={offsets[stream.id] ?? 0}
+                      onStep={stepOffset}
+                      onPromoteAnchor={handlePromoteAnchor}
+                    />
+                  )}
+                </div>
+              );
+            })
+          ) : (
+            <div className="col-span-full w-full h-40 flex items-center justify-center rounded-lg border border-dashed border-pov-border bg-pov-surface/50">
+              <p className="text-pov-muted text-sm">Waiting for streams to join...</p>
             </div>
-          ))
-        )}
-      </div>
+          )}
+        </div>
+      ) : (
+        <>
+          {/* Main Stage — shows the selected stream's player */}
+          <div className="aspect-video bg-black border border-pov-border rounded-lg mb-2 sm:mb-3 overflow-hidden relative">
+            {visibleStreams.length > 0 ? (
+              visibleStreams.map((stream) => (
+                <div
+                  key={`stage-${stream.id}`}
+                  className={`absolute inset-0 transition-opacity duration-200 ${
+                    stream.id === mainStreamId ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'
+                  }`}
+                >
+                  <StreamPlayer
+                    streamUrl={stream.youtube_url}
+                    platform={stream.platform}
+                    isMain={stream.id === mainStreamId}
+                    onReady={(player) => handlePlayerReady(stream.id, player)}
+                    onStateChange={(state) => handleStageStateChange(stream.id, state)}
+                    className="w-full h-full"
+                  />
+                  {/* Main stage name overlay */}
+                  {stream.id === mainStreamId && (
+                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-4 py-3 pointer-events-none">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-white">{stream.display_name}</span>
+                        <StatusIndicators
+                          stream={stream}
+                          isHost={stream.user_id === session?.host_id}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))
+            ) : (
+              <div className="w-full h-full flex items-center justify-center">
+                <div className="text-center">
+                  <p className="text-pov-muted text-sm">Waiting for streams to join...</p>
+                  <div className="mt-3 flex gap-2 justify-center">
+                    {[...Array(5)].map((_, i) => (
+                      <div
+                        key={i}
+                        className="w-3 h-3 bg-pov-border rounded-full animate-pulse"
+                        style={{ animationDelay: `${i * 150}ms` }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Filmstrip — thumbnails that mirror each player's live frame */}
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-2 sm:overflow-x-auto mb-2 pb-1">
+            {visibleStreams.length > 0 ? (
+              visibleStreams.map((stream) => {
+                const isActive = stream.id === mainStreamId;
+                return (
+                  <div key={`film-wrap-${stream.id}`} className="w-full sm:flex-shrink-0 sm:w-48 flex flex-col gap-1">
+                    {/* Thumbnail card */}
+                    <button
+                      onClick={() => handleSwapStream(stream.id)}
+                      className={`w-full rounded-lg border-2 transition-all overflow-hidden relative group ${
+                        isActive
+                          ? 'border-pov-accent shadow-lg shadow-pov-accent/20'
+                          : 'border-pov-border hover:border-pov-muted'
+                      }`}
+                    >
+                      <div className="aspect-video pointer-events-none">
+                        <StreamPlayer
+                          streamUrl={stream.youtube_url}
+                          platform={stream.platform}
+                          isMain={false}
+                          onReady={(player) => {
+                            playerRefs.current[`film-${stream.id}`] = player;
+                          }}
+                          className="w-full h-full"
+                        />
+                      </div>
+                      {/* Name + indicators overlay */}
+                      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-2 py-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-mono text-white truncate">
+                            {stream.display_name}
+                          </span>
+                          <StatusIndicators
+                            stream={stream}
+                            isHost={stream.user_id === session?.host_id}
+                            isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId}
+                          />
+                        </div>
+                      </div>
+                      {isActive && (
+                        <div className="absolute top-0 left-0 right-0 h-0.5 bg-pov-accent" />
+                      )}
+                    </button>
+
+                    {/* Per-stream offset controls — host or delegate, live only */}
+                    {hasControl && !isVod && (
+                      <OffsetControls
+                        streamId={stream.id}
+                        isAnchor={stream.is_anchor}
+                        offset={offsets[stream.id] ?? 0}
+                        onStep={stepOffset}
+                        onPromoteAnchor={handlePromoteAnchor}
+                      />
+                    )}
+                  </div>
+                );
+              })
+            ) : (
+              [...Array(4)].map((_, i) => (
+                <div
+                  key={i}
+                  className="w-full sm:flex-shrink-0 sm:w-48 aspect-video rounded-lg border border-dashed border-pov-border bg-pov-surface/50 animate-pulse flex items-center justify-center"
+                >
+                  <span className="text-[10px] text-pov-muted/40 font-mono">POV {i + 1}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </>
+      )}
 
       {/* Sync Status Panel — host/delegate, live sessions */}
       {hasControl && !isVod && effectiveSyncStats && (

@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 const TOC = [
   { id: 'obs',       label: 'OBS Setup' },
   { id: 'youtube',   label: 'YouTube Setup' },
+  { id: 'twitch',    label: 'Twitch Setup' },
   { id: 'golive',    label: 'Go Live' },
   { id: 'create',    label: 'Create a Session' },
   { id: 'join',      label: 'Join a Session' },
@@ -25,7 +26,7 @@ export default function Setup() {
 
       <div className="grid gap-3 sm:grid-cols-3 mb-8">
         <OverviewCard title="OBS" value="1080p60" detail="CBR, 2s keyframes, NVENC preferred" />
-        <OverviewCard title="YouTube" value="Ultra Low Latency" detail="Public or Unlisted, DVR off" />
+        <OverviewCard title="YouTube / Twitch" value="Live Ready" detail="YouTube: Ultra Low Latency · Twitch: live channel embed" />
         <OverviewCard title="POV Sync" value="Rejoin anytime" detail="Live session resume works across pages" />
       </div>
 
@@ -33,12 +34,11 @@ export default function Setup() {
       <div className="bg-pov-accent/5 border border-pov-accent/20 rounded-xl p-4 sm:p-5 mb-8">
         <p className="text-xs font-mono text-pov-accent uppercase tracking-wider mb-3">⚡ Quick Start — the short version</p>
         <ol className="space-y-1.5 text-sm text-pov-muted">
-          <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">1.</span> Download OBS, connect it to YouTube, and go live.</li>
-              <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">2.</span> Copy your YouTube stream URL (it will look like <code className="text-pov-accent">youtube.com/watch?v=...</code>).</li>
-              <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">3.</span> Host: create a session here and paste your URL. Share the participant link with your squad.</li>
-              <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">4.</span> Squad: open the link, sign in, and paste your own YouTube URL.</li>
-              <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">5.</span> Everyone’s POVs stay aligned automatically.
-              </li>
+          <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">1.</span> Download OBS, connect it to YouTube or Twitch, and go live.</li>
+          <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">2.</span> Copy your stream URL (YouTube looks like <code className="text-pov-accent">youtube.com/watch?v=...</code>; Twitch looks like <code className="text-pov-accent">twitch.tv/yourchannel</code>).</li>
+          <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">3.</span> Host: create a session here and paste your URL. Share the participant link with your squad.</li>
+          <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">4.</span> Squad: open the link, sign in, and paste your own stream URL.</li>
+          <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">5.</span> Everyone’s POVs stay aligned automatically.</li>
         </ol>
         <p className="text-xs text-pov-muted/60 mt-3">Read the full guide below if you get stuck or want to understand the details.</p>
       </div>
@@ -205,6 +205,27 @@ export default function Setup() {
           Google account directly — this lets you manage the stream from OBS without
           copy-pasting keys.
         </Tip>
+
+        <div id="twitch" className="mt-8 pt-6 border-t border-pov-border/60 scroll-mt-20">
+          <SubHeading>Twitch Live Setup</SubHeading>
+          <Steps>
+            <Step n="1">You need a <ExternalLink href="https://www.twitch.tv">Twitch</ExternalLink> account with live streaming enabled.</Step>
+            <Step n="2">Open <ExternalLink href="https://dashboard.twitch.tv">Twitch Creator Dashboard</ExternalLink> and go to <strong>Settings → Stream</strong>.</Step>
+            <Step n="3">Copy your <strong>Primary Stream Key</strong> and keep it private.</Step>
+          </Steps>
+
+          <SubHeading>Connecting OBS to Twitch</SubHeading>
+          <Steps>
+            <Step n="1">In OBS, go to <Kbd>Settings → Stream</Kbd>.</Step>
+            <Step n="2">Set <strong>Service</strong> to <strong>Twitch</strong>.</Step>
+            <Step n="3">Paste your Twitch <strong>Stream Key</strong> into the Stream Key field.</Step>
+            <Step n="4">Click <strong>Apply</strong>, then <strong>OK</strong>.</Step>
+          </Steps>
+
+          <Note>
+            Twitch embeds work best when the channel is already live. POV Sync will show the stream directly in the room once you paste the channel URL.
+          </Note>
+        </div>
       </Section>
 
       {/* ═══════════════════════════════════════════════════════
@@ -214,11 +235,12 @@ export default function Setup() {
         <Steps>
           <Step n="1">Make sure your game or content is running and visible in OBS's preview.</Step>
           <Step n="2">In OBS, click <strong>Start Streaming</strong>.</Step>
-          <Step n="3">Switch to YouTube Studio — after a few seconds you'll see a <strong>preview</strong> of your stream. Click <strong>Go Live</strong> in the top-right to make it public.</Step>
-          <Step n="4">Your stream is now live! Copy the watch URL — it looks like:</Step>
+          <Step n="3">If you're on YouTube, switch to YouTube Studio — after a few seconds you'll see a <strong>preview</strong> of your stream. Click <strong>Go Live</strong> in the top-right to make it public.</Step>
+          <Step n="4">If you're on Twitch, confirm your channel goes live in the Twitch dashboard.</Step>
+          <Step n="5">Copy your stream URL — it looks like one of these:</Step>
         </Steps>
         <code className="block bg-pov-surface border border-pov-border rounded px-4 py-2.5 text-sm font-mono text-pov-muted my-3">
-          https://www.youtube.com/watch?v=YOUR_STREAM_ID
+          https://www.youtube.com/watch?v=YOUR_STREAM_ID  or  https://www.twitch.tv/YOUR_CHANNEL
         </code>
         <p>
           You'll paste this URL into POV Sync when creating or joining a session.
@@ -229,8 +251,8 @@ export default function Setup() {
           items={[
             'OBS scene is set up with game, mic, and optionally webcam',
             'Bitrate is 4500+ Kbps, keyframe interval is 2s',
-            'YouTube stream is set to Public or Unlisted',
-            'Ultra low-latency is enabled',
+            'Your stream is live on YouTube or Twitch',
+            'YouTube has Ultra low-latency enabled, if you are using YouTube',
             'Audio levels look good in OBS mixer (green/yellow, not red)',
             'You can hear game audio and your mic isn\'t muted',
           ]}
@@ -248,7 +270,7 @@ export default function Setup() {
         <Steps>
           <Step n="1">Sign in to POV Sync with Google.</Step>
           <Step n="2">On the <Link to="/" className="text-pov-accent hover:underline">home page</Link>, click <strong>Create Session</strong>.</Step>
-          <Step n="3">Paste your YouTube stream URL and click <strong>Go Live</strong>.</Step>
+          <Step n="3">Paste your YouTube or Twitch stream URL and click <strong>Go Live</strong>.</Step>
           <Step n="4">You'll land in the Viewer. Copy the two links:</Step>
         </Steps>
         <div className="space-y-2 my-3">
@@ -257,7 +279,7 @@ export default function Setup() {
             <div>
               <p className="text-pov-text font-medium text-sm">Participant Link</p>
               <p className="text-xs text-pov-muted mt-0.5">
-                Send to your squad — they'll sign in and submit their own YouTube stream URL.
+                Send to your squad — they'll sign in and submit their own stream URL.
               </p>
             </div>
           </div>
@@ -280,8 +302,8 @@ export default function Setup() {
         <Steps>
           <Step n="1">Open the participant link your host shared, or go to the home page and enter the join code.</Step>
           <Step n="2">Sign in with Google if you aren't already.</Step>
-          <Step n="3">Make sure you're <strong>already live on YouTube</strong> before continuing.</Step>
-          <Step n="4">Enter your display name and paste your YouTube stream URL.</Step>
+          <Step n="3">Make sure you're <strong>already live on YouTube or Twitch</strong> before continuing.</Step>
+          <Step n="4">Enter your display name and paste your stream URL.</Step>
           <Step n="5">Click <strong>Join Session</strong> — your stream appears in the filmstrip within seconds.</Step>
         </Steps>
         <Note>
@@ -300,8 +322,8 @@ export default function Setup() {
           if you're curious.
         </p>
         <Steps>
-          <Step n="1">When your YouTube stream loads, POV Sync quietly notes the exact time it started.</Step>
-          <Step n="2">It does the same for every other stream in the session.</Step>
+          <Step n="1">When your stream loads, POV Sync quietly notes the stream type and starts the matching sync logic.</Step>
+          <Step n="2">YouTube streams use the exact start time from the player; Twitch streams use the live embed and shared room timing.</Step>
           <Step n="3">It works out how many seconds ahead or behind each stream is compared to the anchor (the host's stream).</Step>
           <Step n="4">It nudges each player forward or backward so they all line up. This repeats every few seconds to correct any drift.</Step>
         </Steps>
@@ -382,7 +404,8 @@ export default function Setup() {
           Sync offsets are applied automatically when you watch a VOD — you don't need to
           do anything. You can still switch between POVs freely. YouTube automatically
           saves streams under 12 hours, so as long as your session isn't a marathon you're
-          covered.
+          covered. Twitch live embeds are supported here for live viewing, but VOD replay
+          behavior depends on the platform's own archive settings.
         </Note>
       </Section>
 
@@ -393,9 +416,10 @@ export default function Setup() {
         <TroubleshootItem
           q="My stream URL isn't working"
           a={<>
-            Make sure the stream is <strong>Public</strong> or <strong>Unlisted</strong> (not Private).
-            The URL should look like <code className="text-pov-accent">youtube.com/watch?v=...</code>.
-            If you just started streaming, wait 10–15 seconds for YouTube to propagate the URL.
+            Make sure the stream is live and the URL matches your platform.
+            YouTube URLs look like <code className="text-pov-accent">youtube.com/watch?v=...</code>,
+            and Twitch URLs look like <code className="text-pov-accent">twitch.tv/yourchannel</code>.
+            If you just started streaming, wait 10–15 seconds for the platform to propagate the URL.
           </>}
         />
         <TroubleshootItem
@@ -411,15 +435,15 @@ export default function Setup() {
           q="OBS says 'Failed to connect to server'"
           a={<>
             Double-check your <strong>Stream Key</strong> in <Kbd>OBS → Settings → Stream</Kbd>.
-            Make sure you selected <strong>YouTube - RTMPS</strong> as the service.
-            Try resetting the stream key in YouTube Studio and pasting the new one.
+            Make sure you selected the correct service (<strong>YouTube - RTMPS</strong> or <strong>Twitch</strong>).
+            Try resetting the stream key in your platform dashboard and pasting the new one.
           </>}
         />
         <TroubleshootItem
-          q="YouTube says 'Live streaming not enabled'"
+          q="My platform says 'Live streaming not enabled'"
           a={<>
-            First-time streamers need to enable live streaming in YouTube Studio. It can take up to
-            24 hours for YouTube to verify your account. Make sure your phone number is verified.
+            First-time streamers need to enable live streaming in their platform dashboard. YouTube can take up to
+            24 hours to verify your account. Twitch may require additional verification depending on your account age.
           </>}
         />
         <TroubleshootItem
@@ -427,8 +451,8 @@ export default function Setup() {
           a={<>
             YouTube automatically archives streams under 12 hours. If the VOD is missing,
             the streamer may have manually deleted it, set it to Private, or their stream
-            exceeded 12 hours. Check <strong>YouTube Studio → Content → Live</strong> to
-            see if the archive is there but set to a restricted visibility.
+            exceeded 12 hours. Twitch archives depend on the channel's VOD settings. Check your
+            platform's live archive page to confirm the replay is available.
           </>}
         />
         <TroubleshootItem
@@ -451,8 +475,8 @@ export default function Setup() {
         <TroubleshootItem
           q="Can I use Streamlabs, XSplit, or another app instead of OBS?"
           a={<>
-            Yes! POV Sync only needs a YouTube stream URL. Any software that can stream to YouTube
-            works — OBS is just what we recommend because it's free, open source, and widely used.
+            Yes! POV Sync only needs a YouTube or Twitch stream URL. Any software that can stream to
+            either platform works — OBS is just what we recommend because it's free, open source, and widely used.
           </>}
         />
       </Section>
