@@ -23,7 +23,7 @@ router.post('/', requireAuth, async (req, res) => {
 
     const rawEntries = Array.isArray(req.body.streams)
       ? req.body.streams
-      : [{ youtubeUrl: req.body.youtubeUrl, displayName: req.body.displayName }];
+      : [{ youtubeUrl: req.body.youtubeUrl ?? req.body.streamUrl, displayName: req.body.displayName }];
 
     if (!hostId || rawEntries.length === 0) {
       return res.status(400).json({ error: 'At least one stream URL is required' });
@@ -214,7 +214,7 @@ router.post('/:id/streams', requireAuth, async (req, res) => {
 
     const rawEntries = Array.isArray(req.body.streams)
       ? req.body.streams
-      : [{ youtubeUrl: req.body.youtubeUrl, displayName: req.body.displayName }];
+      : [{ youtubeUrl: req.body.youtubeUrl ?? req.body.streamUrl, displayName: req.body.displayName }];
 
     if (!userId || rawEntries.length === 0) {
       return res.status(400).json({ error: 'At least one stream URL is required' });

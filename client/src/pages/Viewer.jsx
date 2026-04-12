@@ -625,7 +625,7 @@ export default function Viewer() {
           ...(token && { Authorization: `Bearer ${token}` }),
         },
         body: JSON.stringify({
-          streamUrl,
+          youtubeUrl: streamUrl,
           displayName,
         }),
       });
