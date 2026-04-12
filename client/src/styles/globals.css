@@ -25,8 +25,8 @@
 .light {
   color-scheme: light;
 
-  --pov-bg:       248 247 252;    /* #f8f7fc — warm lavender-white  */
-  --pov-surface:  255 255 255;    /* #ffffff — clean white cards    */
+  --pov-bg:       248 247 252;    /* #bfbec7 — warm lavender-white  */
+  --pov-surface:  255 255 255;    /* #d1cfcf — clean white cards    */
   --pov-border:   228 226 236;    /* #e4e2ec — soft edge            */
   --pov-accent:   108 92 231;     /* #6c5ce7 — same vibrant purple  */
   --pov-success:  0 180 130;      /* #00b482 — slightly deeper mint */
