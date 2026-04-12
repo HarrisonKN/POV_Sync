@@ -1067,7 +1067,7 @@ export default function Viewer() {
       {viewMode === 'wall' ? (
         <div
           className="grid gap-2 sm:gap-3 mb-2 sm:mb-3"
-          style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${roomTileMinWidth}px, 1fr))` }}
+          style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${roomTileMinWidth}px, ${roomTileMinWidth}px))` }}
         >
           {visibleStreams.map((stream) => {
             const isActive = stream.id === mainStreamId;
@@ -1131,7 +1131,7 @@ export default function Viewer() {
       ) : (
         <>
           {/* Main Stage — shows the selected stream's player */}
-          <div className="aspect-video bg-black border border-pov-border rounded-lg mb-2 sm:mb-3 overflow-hidden relative">
+          <div className="aspect-video bg-black border border-pov-border rounded-lg mb-2 sm:mb-3 overflow-hidden relative" style={{ maxHeight: 'calc(100vh - 340px)', minHeight: '200px' }}>
             {visibleStreams.length > 0 ? (
               visibleStreams.map((stream) => (
                 <div
@@ -1181,8 +1181,8 @@ export default function Viewer() {
           </div>
 
           {/* Filmstrip — thumbnails that mirror each player's live frame */}
-          <div className="grid gap-2 sm:gap-3 sm:overflow-x-auto mb-2 pb-1"
-               style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${roomTileMinWidth}px, 1fr))` }}>
+          <div className="grid gap-2 sm:gap-3 overflow-x-auto mb-2 pb-1"
+               style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${Math.round(roomTileMinWidth * 0.6)}px, ${Math.round(roomTileMinWidth * 0.6)}px))` }}>
             {visibleStreams.map((stream) => {
               const isActive = stream.id === mainStreamId;
 
