@@ -6,23 +6,111 @@ import { fileURLToPath } from 'url';
 import { createServer } from 'http';
 import sessionRoutes from './routes/sessions.js';
 import { setupWebSocket } from './websocket/index.js';
+import { stopAllSessions } from './services/syncManager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+app.set('trust proxy', 1); // trust first proxy hop (Render / Cloudflare)
 const PORT = process.env.PORT || 3002;
 
+const defaultOrigins = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:3002',
+  'http://127.0.0.1:3002',
+];
+
+const configuredOrigins = (process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const allowedOrigins = new Set([
+  ...defaultOrigins,
+  ...configuredOrigins,
+]);
+
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  if (allowedOrigins.has(origin)) return true;
+  if (process.env.NODE_ENV !== 'production' && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+    return true;
+  }
+  return false;
+}
+
+const rateLimitWindowMs = 60_000;
+const rateLimitMax = Number(process.env.API_RATE_LIMIT_MAX || 120);
+const requestCounts = new Map();
+
+function apiRateLimit(req, res, next) {
+  const key = req.ip || 'unknown';
+  const now = Date.now();
+  const bucket = requestCounts.get(key);
+
+  if (!bucket || bucket.resetAt <= now) {
+    requestCounts.set(key, { count: 1, resetAt: now + rateLimitWindowMs });
+    return next();
+  }
+
+  bucket.count += 1;
+  if (bucket.count > rateLimitMax) {
+    const retryAfterSeconds = Math.ceil((bucket.resetAt - now) / 1000);
+    res.setHeader('Retry-After', String(retryAfterSeconds));
+    return res.status(429).json({ error: 'Too many requests' });
+  }
+
+  return next();
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of requestCounts.entries()) {
+    if (bucket.resetAt <= now) {
+      requestCounts.delete(key);
+    }
+  }
+}, rateLimitWindowMs).unref();
+
 // Middleware
-app.use(cors());
-app.use(express.json());
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
 
-// API routes
-app.use('/api/sessions', sessionRoutes);
+app.use(cors({
+  origin(origin, callback) {
+    if (isAllowedOrigin(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error('Origin not allowed'));
+  },
+}));
+app.use(express.json({ limit: '16kb' }));
 
-// Health check — also used by UptimeRobot to prevent Render sleep
+// Health check — exempt from rate limiting (monitoring services)
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// API routes
+app.use('/api', apiRateLimit);
+app.use('/api/sessions', sessionRoutes);
+
+// Catch malformed JSON bodies — return consistent JSON error shape
+app.use((err, req, res, next) => {
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Malformed JSON in request body' });
+  }
+  next(err);
 });
 
 // In production, serve the built React frontend
@@ -39,9 +127,43 @@ app.get('*', (req, res) => {
 
 // Create HTTP server and attach WebSocket
 const server = createServer(app);
-setupWebSocket(server);
+const wss = setupWebSocket(server);
 
 server.listen(PORT, () => {
   console.log(`[Server] Running on http://localhost:${PORT}`);
   console.log(`[Server] Health check: http://localhost:${PORT}/api/health`);
 });
+
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+
+function shutdown(signal) {
+  console.log(`\n[Server] ${signal} received — shutting down gracefully...`);
+
+  // 1. Stop accepting new connections
+  server.close(() => {
+    console.log('[Server] HTTP server closed — exiting');
+    process.exit(0);
+  });
+
+  // 2. Close all WebSocket connections
+  if (wss) {
+    for (const client of wss.clients) {
+      client.close(1001, 'server shutting down');
+    }
+    wss.close(() => {
+      console.log('[Server] WebSocket server closed');
+    });
+  }
+
+  // 3. Clean up all sync sessions (clear intervals, free memory)
+  stopAllSessions();
+
+  // 4. Force exit after 5s if something hangs
+  setTimeout(() => {
+    console.error('[Server] Forced exit after timeout');
+    process.exit(1);
+  }, 5000).unref();
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));

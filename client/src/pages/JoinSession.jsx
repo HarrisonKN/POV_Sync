@@ -21,78 +21,6 @@ export default function JoinSession() {
   const { activeSession } = useActiveSession();
   const navigate = useNavigate();
 
-  // ── Code-entry screen (navigated to /join with no code) ──────────────────
-  const [codeInput, setCodeInput] = useState('');
-  const [codeError, setCodeError] = useState('');
-
-  if (!code) {
-    function handleCodeSubmit(e) {
-      e.preventDefault();
-      const parsed = parseJoinCode(codeInput);
-      if (!parsed) { setCodeError('Please enter a join code'); return; }
-      navigate(`/join/${parsed}`);
-    }
-
-    return (
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
-        <div className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr] items-start">
-          <div className="bg-pov-surface border border-pov-border rounded-2xl p-5 sm:p-6 shadow-sm">
-            <p className="text-[10px] font-mono text-pov-muted uppercase tracking-wider mb-2">Join a session</p>
-            <h1 className="text-2xl sm:text-3xl font-bold font-mono mb-2">Paste a join code or participant link</h1>
-            <p className="text-sm text-pov-muted mb-6 max-w-lg">
-              If your host sent you a participant link, you can paste it directly here.
-              If not, enter the short join code from Discord or chat.
-            </p>
-            <form onSubmit={handleCodeSubmit} className="space-y-4">
-              <input
-                type="text"
-                value={codeInput}
-                autoFocus
-                onChange={(e) => { setCodeInput(e.target.value); setCodeError(''); }}
-                placeholder="Join code or participant link"
-                className="w-full bg-pov-bg border border-pov-border rounded-xl px-4 py-3 text-sm text-pov-text placeholder:text-pov-muted/40 focus:outline-none focus:border-pov-accent transition-colors font-mono"
-              />
-              {codeError && (
-                <p className="text-xs text-pov-danger">{codeError}</p>
-              )}
-              <button
-                type="submit"
-                className="w-full bg-pov-accent hover:bg-pov-accent/80 text-white font-semibold rounded-xl px-6 py-3 text-sm transition-colors"
-              >
-                Continue →
-              </button>
-            </form>
-          </div>
-
-          <div className="space-y-4">
-            {activeSession && (
-              <SessionResumeCard
-                session={activeSession}
-                to={user?.id === activeSession.host_id ? `/session/${activeSession.id}` : `/session/${activeSession.id}?pov=${user.id}`}
-                title="You already have a live session"
-                subtitle="If you navigated away earlier, jump back now instead of starting over."
-                compact
-              />
-            )}
-
-            <div className="bg-pov-surface border border-pov-border rounded-2xl p-5 sm:p-6">
-              <p className="text-[10px] font-mono text-pov-muted uppercase tracking-wider mb-3">How it works</p>
-              <div className="space-y-3 text-sm text-pov-muted leading-relaxed">
-                <p>1. Paste the join code or participant link.</p>
-                <p>2. Sign in if needed.</p>
-                <p>3. Add your YouTube stream URL once you're live.</p>
-                <p>4. You’ll land in the shared session right away.</p>
-              </div>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <Link to="/setup" className="text-xs font-mono text-pov-accent hover:underline">Need setup help? Open the guide →</Link>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   const [session, setSession] = useState(null);
   const [streams, setStreams] = useState([]);
   const [youtubeUrl, setYoutubeUrl] = useState('');
@@ -100,9 +28,19 @@ export default function JoinSession() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [codeInput, setCodeInput] = useState('');
+  const [codeError, setCodeError] = useState('');
+
+  function handleCodeSubmit(e) {
+    e.preventDefault();
+    const parsed = parseJoinCode(codeInput);
+    if (!parsed) { setCodeError('Please enter a join code'); return; }
+    navigate(`/join/${parsed}`);
+  }
 
   // Fetch session info
   useEffect(() => {
+    if (!code) return;
     async function fetchSession() {
       try {
         const res = await fetch(`/api/sessions/join/${code}`);
@@ -121,6 +59,7 @@ export default function JoinSession() {
 
   // Realtime: watch for new streams joining while on this page
   useEffect(() => {
+    if (!code || !session?.id) return;
     if (!session?.id) return;
 
     const channel = supabase
@@ -214,6 +153,67 @@ export default function JoinSession() {
     );
   }
 
+  if (!code) {
+    return (
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+        <div className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr] items-start">
+          <div className="bg-pov-surface border border-pov-border rounded-2xl p-5 sm:p-6 shadow-sm">
+            <p className="text-[10px] font-mono text-pov-muted uppercase tracking-wider mb-2">Join a session</p>
+            <h1 className="text-2xl sm:text-3xl font-bold font-mono mb-2">Enter a join code or participant link</h1>
+            <p className="text-sm text-pov-muted mb-6 max-w-lg">
+              If your host sent you a participant link, paste it here.
+              Otherwise, enter the short join code from Discord, chat, or text.
+            </p>
+            <form onSubmit={handleCodeSubmit} className="space-y-4">
+              <input
+                type="text"
+                value={codeInput}
+                autoFocus
+                onChange={(e) => { setCodeInput(e.target.value); setCodeError(''); }}
+                placeholder="Join code or participant link"
+                className="w-full bg-pov-bg border border-pov-border rounded-xl px-4 py-3 text-sm text-pov-text placeholder:text-pov-muted/40 focus:outline-none focus:border-pov-accent transition-colors font-mono"
+              />
+              {codeError && (
+                <p className="text-xs text-pov-danger">{codeError}</p>
+              )}
+              <button
+                type="submit"
+                className="w-full bg-pov-accent hover:bg-pov-accent/80 text-white font-semibold rounded-xl px-6 py-3 text-sm transition-colors"
+              >
+                Continue →
+              </button>
+            </form>
+          </div>
+
+          <div className="space-y-4">
+            {activeSession && (
+              <SessionResumeCard
+                session={activeSession}
+                to={user?.id === activeSession.host_id ? `/session/${activeSession.id}` : `/session/${activeSession.id}?pov=${user.id}`}
+                title="You already have a live session"
+                subtitle="Jump back in instead of starting over."
+                compact
+              />
+            )}
+
+            <div className="bg-pov-surface border border-pov-border rounded-2xl p-5 sm:p-6">
+              <p className="text-[10px] font-mono text-pov-muted uppercase tracking-wider mb-3">How it works</p>
+              <div className="space-y-3 text-sm text-pov-muted leading-relaxed">
+                <p>1. Paste the join code or participant link.</p>
+                <p>2. Sign in if needed.</p>
+                <p>3. Add your YouTube stream URL once you’re live.</p>
+                <p>4. You’ll enter the shared room right away.</p>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Link to="/setup" className="text-xs font-mono text-pov-accent hover:underline">Need setup help? Open the guide →</Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (error && !session) {
     return (
       <ErrorState
@@ -233,7 +233,7 @@ export default function JoinSession() {
         icon="📼"
         title="Session has ended"
         message="This session is over, but you can still watch all the POVs as a VOD."
-        helper="If you were trying to join live, go back to the participant link for the current session instead."
+        helper="If you meant to join live, go back to the participant link for the current session."
         action={{
           label: 'Watch VOD',
           onClick: () => navigate(`/watch/${session.spectator_link}`),
@@ -397,7 +397,7 @@ export default function JoinSession() {
             <p className="text-[10px] font-mono text-pov-muted uppercase tracking-wider mb-3">Helpful reminders</p>
             <ul className="space-y-2 text-sm text-pov-muted leading-relaxed">
               <li>• You need to be live on YouTube before you submit.</li>
-              <li>• The participant link is for streamers; spectator link is read-only.</li>
+              <li>• The participant link is for streamers; the spectator link is read-only.</li>
               <li>• If you leave the page, the navbar can take you back to any active live session.</li>
             </ul>
           </div>

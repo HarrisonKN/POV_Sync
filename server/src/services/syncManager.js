@@ -29,6 +29,8 @@
  */
 
 const BROADCAST_INTERVAL_MS = 4000; // push status every 4 seconds
+const MAX_SESSION_AGE_MS = 12 * 60 * 60 * 1000; // 12 hours — auto-cleanup abandoned sessions
+const SWEEP_INTERVAL_MS = 60_000; // check for stale sessions every 60s
 
 /**
  * Per-session state shape:
@@ -40,9 +42,23 @@ const BROADCAST_INTERVAL_MS = 4000; // push status every 4 seconds
  *   streamUrls:     Map<streamId, string>,   // youtube URLs
  *   everHadStreams:  boolean,
  *   intervalId:     NodeJS.Timeout | null,
+ *   createdAt:      number,                  // Date.now() when session was started
  * }
  */
 const sessions = new Map();
+
+// ─── Session TTL sweep ────────────────────────────────────────────────────────
+
+const _sweepIntervalId = setInterval(() => {
+  const now = Date.now();
+  for (const [sessionId, state] of sessions.entries()) {
+    if (now - state.createdAt > MAX_SESSION_AGE_MS) {
+      console.warn(`[SyncManager] Session ${sessionId} expired after ${MAX_SESSION_AGE_MS / 3600000}h — cleaning up`);
+      stopSession(sessionId);
+    }
+  }
+}, SWEEP_INTERVAL_MS);
+_sweepIntervalId.unref(); // don't block process exit
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
@@ -118,6 +134,7 @@ export function startSession(sessionId, broadcastFn) {
     streamIds:     new Set(),
     streamUrls:    new Map(),
     everHadStreams: false,
+    createdAt:     Date.now(),
     intervalId:    setInterval(() => runBroadcastCycle(sessionId), BROADCAST_INTERVAL_MS),
   });
 
@@ -216,4 +233,15 @@ export function stopSession(sessionId) {
   sessions.delete(sessionId);
 
   console.log(`[SyncManager] Session ${sessionId} stopped`);
+}
+
+/**
+ * Stop all active sessions — used during graceful shutdown.
+ */
+export function stopAllSessions() {
+  const ids = [...sessions.keys()];
+  for (const sessionId of ids) {
+    stopSession(sessionId);
+  }
+  console.log(`[SyncManager] Stopped all ${ids.length} sessions`);
 }

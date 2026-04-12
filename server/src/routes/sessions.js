@@ -1,21 +1,43 @@
 import { Router } from 'express';
-import { supabase } from '../lib/supabase.js';
+import { supabaseAdmin } from '../lib/supabase.js';
 import { requireAuth } from '../lib/supabaseAuth.js';
-import { generateLinkCode } from '../../../shared/helpers.js';
+import { generateLinkCode, extractYouTubeVideoId } from '../../../shared/helpers.js';
 import * as syncManager from '../services/syncManager.js';
 import { broadcastToSession, setControlDelegation } from '../websocket/index.js';
 
 const router = Router();
 
+// ── Param validators ──────────────────────────────────────────────────────────
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+router.param('id', (req, res, next, id) => {
+  if (!UUID_RE.test(id)) {
+    return res.status(400).json({ error: 'Invalid session ID format' });
+  }
+  next();
+});
+
 // POST /api/sessions — Create a new session
 router.post('/', requireAuth, async (req, res) => {
   try {
-    console.log('[API] POST /api/sessions — body:', JSON.stringify(req.body));
-    const { hostId, youtubeUrl, displayName } = req.body;
+    const { youtubeUrl, displayName } = req.body;
+    const hostId = req.supabaseUser?.id;
 
     if (!hostId || !youtubeUrl || !displayName) {
-      return res.status(400).json({ error: 'hostId, youtubeUrl, and displayName are required' });
+      return res.status(400).json({ error: 'youtubeUrl and displayName are required' });
     }
+
+    // Server-side YouTube URL validation
+    if (!extractYouTubeVideoId(youtubeUrl)) {
+      return res.status(400).json({ error: 'Invalid YouTube URL' });
+    }
+
+    // Sanitize displayName
+    const trimmedName = String(displayName).trim().slice(0, 40);
+    if (trimmedName.length === 0) {
+      return res.status(400).json({ error: 'displayName cannot be empty' });
+    }
+
+    console.log(`[API] POST /api/sessions — host=${hostId.slice(0, 8)}`);
 
     const participantLink = generateLinkCode(10);
     const spectatorLink = generateLinkCode(10);
@@ -49,7 +71,7 @@ router.post('/', requireAuth, async (req, res) => {
       .insert({
         session_id: session.id,
         user_id: hostId,
-        display_name: displayName,
+        display_name: trimmedName,
         youtube_url: youtubeUrl,
         offset_seconds: 0,
         is_anchor: true,
@@ -88,7 +110,7 @@ router.post('/', requireAuth, async (req, res) => {
     });
   } catch (err) {
     console.error('[API] Error creating session:', err);
-    res.status(500).json({ error: err.message || 'Failed to create session' });
+    res.status(500).json({ error: 'Failed to create session' });
   }
 });
 
@@ -98,9 +120,9 @@ router.get('/join/:code', async (req, res) => {
     const { code } = req.params;
     console.log('[API] GET /join/:code —', code);
 
-    const { data: session, error } = await supabase
+    const { data: session, error } = await supabaseAdmin
       .from('sessions')
-      .select('*, streams!streams_session_id_fkey(*)')
+      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, created_at, ended_at, vod_ready_at, streams(id, display_name, user_id, youtube_url, offset_seconds, is_anchor, is_active, joined_at, left_at, users(avatar_url, display_name))')
       .eq('participant_link', code)
       .single();
 
@@ -122,9 +144,9 @@ router.get('/watch/:code', async (req, res) => {
   try {
     const { code } = req.params;
 
-    const { data: session, error } = await supabase
+    const { data: session, error } = await supabaseAdmin
       .from('sessions')
-      .select('*, streams!streams_session_id_fkey(*)')
+      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, created_at, ended_at, vod_ready_at, streams(id, display_name, user_id, youtube_url, offset_seconds, is_anchor, is_active, joined_at, left_at, users(avatar_url, display_name))')
       .eq('spectator_link', code)
       .single();
 
@@ -143,15 +165,27 @@ router.get('/watch/:code', async (req, res) => {
 router.post('/:id/streams', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { userId, youtubeUrl, displayName } = req.body;
+    const { youtubeUrl, displayName } = req.body;
+    const userId = req.supabaseUser?.id;
 
     if (!userId || !youtubeUrl || !displayName) {
-      return res.status(400).json({ error: 'userId, youtubeUrl, and displayName are required' });
+      return res.status(400).json({ error: 'youtubeUrl and displayName are required' });
+    }
+
+    // Server-side YouTube URL validation
+    if (!extractYouTubeVideoId(youtubeUrl)) {
+      return res.status(400).json({ error: 'Invalid YouTube URL' });
+    }
+
+    // Sanitize displayName
+    const trimmedName = String(displayName).trim().slice(0, 40);
+    if (trimmedName.length === 0) {
+      return res.status(400).json({ error: 'displayName cannot be empty' });
     }
 
     // Use unauthenticated client for reads (SELECT policies allow public read)
     // Verify session exists and is live
-    const { data: session, error: sessionError } = await supabase
+    const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
       .select('*')
       .eq('id', id)
@@ -163,7 +197,7 @@ router.post('/:id/streams', requireAuth, async (req, res) => {
     }
 
     // Check stream count
-    const { count } = await supabase
+    const { count } = await supabaseAdmin
       .from('streams')
       .select('*', { count: 'exact', head: true })
       .eq('session_id', id);
@@ -178,8 +212,8 @@ router.post('/:id/streams', requireAuth, async (req, res) => {
       .from('streams')
       .insert({
         session_id: id,
-        user_id: userId,
-        display_name: displayName,
+        user_id: req.supabaseUser.id,
+        display_name: trimmedName,
         youtube_url: youtubeUrl,
         offset_seconds: 0,
         is_anchor: false,
@@ -196,7 +230,7 @@ router.post('/:id/streams', requireAuth, async (req, res) => {
     res.json({ stream });
   } catch (err) {
     console.error('Error adding stream:', err);
-    res.status(500).json({ error: err.message || 'Failed to add stream' });
+    res.status(500).json({ error: 'Failed to add stream' });
   }
 });
 
@@ -211,7 +245,7 @@ router.post('/:id/promote-anchor', requireAuth, async (req, res) => {
     }
 
     // Verify requester is the session host
-    const { data: session, error: fetchError } = await supabase
+    const { data: session, error: fetchError } = await supabaseAdmin
       .from('sessions')
       .select('host_id')
       .eq('id', id)
@@ -234,11 +268,12 @@ router.post('/:id/promote-anchor', requireAuth, async (req, res) => {
       .update({ is_anchor: false })
       .eq('session_id', id);
 
-    // Set new anchor
+    // Set new anchor (scoped to session for safety)
     const { error: updateError } = await db
       .from('streams')
       .update({ is_anchor: true })
-      .eq('id', streamId);
+      .eq('id', streamId)
+      .eq('session_id', id);
 
     if (updateError) throw updateError;
 
@@ -254,7 +289,7 @@ router.post('/:id/promote-anchor', requireAuth, async (req, res) => {
     res.json({ success: true, newAnchorStreamId: streamId });
   } catch (err) {
     console.error('Error promoting anchor:', err);
-    res.status(500).json({ error: err.message || 'Failed to promote anchor' });
+    res.status(500).json({ error: 'Failed to promote anchor' });
   }
 });
 
@@ -263,36 +298,37 @@ router.post('/:id/promote-anchor', requireAuth, async (req, res) => {
 // works correctly even after a server restart (no audio data retained between restarts).
 router.patch('/:id/streams/:streamId/start-time', requireAuth, async (req, res) => {
   try {
-    const { streamId } = req.params;
+    const { id, streamId } = req.params;
     const { startTime } = req.body; // Unix timestamp (seconds) from YT IFrame API
 
-    if (typeof startTime !== 'number' || startTime <= 0) {
-      return res.status(400).json({ error: 'startTime must be a positive Unix timestamp' });
+    if (typeof startTime !== 'number' || !Number.isFinite(startTime) || startTime <= 0 || startTime > 4e10) {
+      return res.status(400).json({ error: 'startTime must be a finite positive Unix timestamp' });
     }
 
     const db = req.supabase;
     const { error } = await db
       .from('streams')
       .update({ youtube_start_time: startTime })
-      .eq('id', streamId);
+      .eq('id', streamId)
+      .eq('session_id', id);
 
     if (error) throw error;
 
     res.json({ success: true, startTime });
   } catch (err) {
     console.error('Error saving start time:', err);
-    res.status(500).json({ error: err.message || 'Failed to save start time' });
+    res.status(500).json({ error: 'Failed to save start time' });
   }
 });
 
 // PATCH /api/sessions/:id/streams/:streamId/offset — Update a stream's offset
 router.patch('/:id/streams/:streamId/offset', requireAuth, async (req, res) => {
   try {
-    const { streamId } = req.params;
+    const { id, streamId } = req.params;
     const { offsetSeconds } = req.body;
 
-    if (typeof offsetSeconds !== 'number') {
-      return res.status(400).json({ error: 'offsetSeconds must be a number' });
+    if (typeof offsetSeconds !== 'number' || !Number.isFinite(offsetSeconds) || Math.abs(offsetSeconds) > 86400) {
+      return res.status(400).json({ error: 'offsetSeconds must be a finite number within ±24h' });
     }
 
     // RLS: stream owner or session host can update
@@ -300,14 +336,15 @@ router.patch('/:id/streams/:streamId/offset', requireAuth, async (req, res) => {
     const { error } = await db
       .from('streams')
       .update({ offset_seconds: offsetSeconds })
-      .eq('id', streamId);
+      .eq('id', streamId)
+      .eq('session_id', id);
 
     if (error) throw error;
 
     res.json({ success: true, offsetSeconds });
   } catch (err) {
     console.error('Error updating offset:', err);
-    res.status(500).json({ error: err.message || 'Failed to update offset' });
+    res.status(500).json({ error: 'Failed to update offset' });
   }
 });
 
@@ -321,7 +358,7 @@ router.post('/:id/leave', requireAuth, async (req, res) => {
     }
 
     // Find the participant's stream in this session
-    const { data: stream, error: findError } = await supabase
+    const { data: stream, error: findError } = await supabaseAdmin
       .from('streams')
       .select('id, is_anchor')
       .eq('session_id', id)
@@ -355,7 +392,7 @@ router.post('/:id/leave', requireAuth, async (req, res) => {
     res.json({ success: true, archivedStreamId: stream.id });
   } catch (err) {
     console.error('Error leaving session:', err);
-    res.status(500).json({ error: err.message || 'Failed to leave session' });
+    res.status(500).json({ error: 'Failed to leave session' });
   }
 });
 
@@ -363,10 +400,9 @@ router.post('/:id/leave', requireAuth, async (req, res) => {
 router.post('/:id/end', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { hostId } = req.body;
 
     // Verify the requester is the host (public read is fine)
-    const { data: session, error: fetchError } = await supabase
+    const { data: session, error: fetchError } = await supabaseAdmin
       .from('sessions')
       .select('host_id')
       .eq('id', id)
@@ -376,14 +412,14 @@ router.post('/:id/end', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Session not found' });
     }
 
-    if (session.host_id !== hostId) {
+    if (session.host_id !== req.supabaseUser?.id) {
       return res.status(403).json({ error: 'Only the host can end the session' });
     }
 
     // Fetch all streams to compute final VOD offsets from UTC start times
-    const { data: allStreams } = await supabase
+    const { data: allStreams } = await supabaseAdmin
       .from('streams')
-      .select('id, is_anchor, youtube_start_time')
+      .select('id, is_anchor, youtube_start_time, is_active')
       .eq('session_id', id);
 
     const anchor = allStreams?.find((s) => s.is_anchor);
@@ -394,7 +430,7 @@ router.post('/:id/end', requireAuth, async (req, res) => {
         if (stream.youtube_start_time) {
           const offset = Math.round((stream.youtube_start_time - anchorStart) * 100) / 100;
           // Save computed offset to DB so VOD playback works without the sync server
-          await supabase
+          await supabaseAdmin
             .from('streams')
             .update({ offset_seconds: offset })
             .eq('id', stream.id);
@@ -404,8 +440,7 @@ router.post('/:id/end', requireAuth, async (req, res) => {
     }
 
     // Use authenticated client for UPDATE (RLS: auth.uid() = host_id)
-    const db = req.supabase;
-    const { error: updateError } = await db
+    const { error: updateError } = await supabaseAdmin
       .from('sessions')
       .update({
         status: 'ended',
@@ -422,7 +457,7 @@ router.post('/:id/end', requireAuth, async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('Error ending session:', err);
-    res.status(500).json({ error: err.message || 'Failed to end session' });
+    res.status(500).json({ error: 'Failed to end session' });
   }
 });
 
@@ -436,7 +471,7 @@ router.post('/:id/delegate', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'delegateeUserId is required' });
     }
 
-    const { data: session, error: fetchError } = await supabase
+    const { data: session, error: fetchError } = await supabaseAdmin
       .from('sessions')
       .select('host_id')
       .eq('id', id)
@@ -452,7 +487,7 @@ router.post('/:id/delegate', requireAuth, async (req, res) => {
     }
 
     // Delegatee must be a participant in this session
-    const { data: targetStream } = await supabase
+    const { data: targetStream } = await supabaseAdmin
       .from('streams')
       .select('id, display_name')
       .eq('session_id', id)
@@ -469,7 +504,7 @@ router.post('/:id/delegate', requireAuth, async (req, res) => {
     res.json({ success: true, delegateeUserId });
   } catch (err) {
     console.error('Error delegating control:', err);
-    res.status(500).json({ error: err.message || 'Failed to delegate control' });
+    res.status(500).json({ error: 'Failed to delegate control' });
   }
 });
 
@@ -478,7 +513,7 @@ router.post('/:id/revoke-control', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
 
-    const { data: session, error: fetchError } = await supabase
+    const { data: session, error: fetchError } = await supabaseAdmin
       .from('sessions')
       .select('host_id')
       .eq('id', id)
@@ -498,7 +533,7 @@ router.post('/:id/revoke-control', requireAuth, async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('Error revoking control:', err);
-    res.status(500).json({ error: err.message || 'Failed to revoke control' });
+    res.status(500).json({ error: 'Failed to revoke control' });
   }
 });
 

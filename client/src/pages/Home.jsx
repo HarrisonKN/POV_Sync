@@ -134,7 +134,6 @@ export default function Home() {
           ...(token && { Authorization: `Bearer ${token}` }),
         },
         body: JSON.stringify({
-          hostId: user.id,
           youtubeUrl: youtubeUrl.trim(),
           displayName: profile?.display_name || user.email,
         }),
@@ -199,7 +198,7 @@ export default function Home() {
                   onClick={signInWithGoogle}
                   className="bg-pov-accent hover:bg-pov-accent/85 text-white font-semibold rounded-xl px-8 py-3.5 text-base transition-all hover:shadow-lg hover:shadow-pov-accent/25 hover:-translate-y-0.5"
                 >
-                  Get Started — it's free
+                  Get Started — it’s free
                 </button>
                 <Link
                   to="/setup"

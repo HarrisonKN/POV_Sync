@@ -2,15 +2,15 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 const TOC = [
-  { id: 'obs',       label: 'OBS Studio Setup' },
-  { id: 'youtube',   label: 'YouTube Live Setup' },
-  { id: 'golive',    label: 'Going Live' },
-  { id: 'create',    label: 'Create a Session (Host)' },
+  { id: 'obs',       label: 'OBS Setup' },
+  { id: 'youtube',   label: 'YouTube Setup' },
+  { id: 'golive',    label: 'Go Live' },
+  { id: 'create',    label: 'Create a Session' },
   { id: 'join',      label: 'Join a Session' },
   { id: 'syncing',   label: 'How Sync Works' },
   { id: 'controls',  label: 'Controls & Offsets' },
-  { id: 'spectator', label: 'Spectators' },
-  { id: 'vod',       label: 'VODs' },
+  { id: 'spectator', label: 'Spectator View' },
+  { id: 'vod',       label: 'VOD Replay' },
   { id: 'trouble',   label: 'Troubleshooting' },
 ];
 
@@ -34,10 +34,11 @@ export default function Setup() {
         <p className="text-xs font-mono text-pov-accent uppercase tracking-wider mb-3">⚡ Quick Start — the short version</p>
         <ol className="space-y-1.5 text-sm text-pov-muted">
           <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">1.</span> Download OBS, connect it to YouTube, and go live.</li>
-          <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">2.</span> Copy your YouTube stream URL (looks like <code className="text-pov-accent">youtube.com/watch?v=...</code>).</li>
-          <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">3.</span> Host: create a session here and paste your URL. Share the participant link with your squad.</li>
-          <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">4.</span> Squad: click the link, sign in, paste your own YouTube URL. Done.</li>
-          <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">5.</span> Everyone's streams appear in sync automatically.</li>
+              <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">2.</span> Copy your YouTube stream URL (it will look like <code className="text-pov-accent">youtube.com/watch?v=...</code>).</li>
+              <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">3.</span> Host: create a session here and paste your URL. Share the participant link with your squad.</li>
+              <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">4.</span> Squad: open the link, sign in, and paste your own YouTube URL.</li>
+              <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">5.</span> Everyone’s POVs stay aligned automatically.
+              </li>
         </ol>
         <p className="text-xs text-pov-muted/60 mt-3">Read the full guide below if you get stuck or want to understand the details.</p>
       </div>
@@ -217,7 +218,7 @@ export default function Setup() {
           <Step n="4">Your stream is now live! Copy the watch URL — it looks like:</Step>
         </Steps>
         <code className="block bg-pov-surface border border-pov-border rounded px-4 py-2.5 text-sm font-mono text-pov-muted my-3">
-          https://www.youtube.com/watch?v=xxxxxxxxxxx
+          https://www.youtube.com/watch?v=YOUR_STREAM_ID
         </code>
         <p>
           You'll paste this URL into POV Sync when creating or joining a session.
@@ -277,7 +278,7 @@ export default function Setup() {
           ═══════════════════════════════════════════════════════ */}
       <Section id="join" step="5" title="Join a Session">
         <Steps>
-          <Step n="1">Click the participant link your host shared, or go to the home page and enter the join code.</Step>
+          <Step n="1">Open the participant link your host shared, or go to the home page and enter the join code.</Step>
           <Step n="2">Sign in with Google if you aren't already.</Step>
           <Step n="3">Make sure you're <strong>already live on YouTube</strong> before continuing.</Step>
           <Step n="4">Enter your display name and paste your YouTube stream URL.</Step>

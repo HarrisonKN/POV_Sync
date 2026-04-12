@@ -26,14 +26,26 @@ export function extractYouTubeVideoId(url) {
 }
 
 /**
- * Generate a short random code for session links.
+ * Generate a cryptographically secure random code for session links.
  * e.g. "a3f9c2b1"
+ *
+ * Uses the Web Crypto API (globalThis.crypto.getRandomValues) which is
+ * available in all modern browsers and Node.js 19+.
  */
 export function generateLinkCode(length = 8) {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  const arr = new Uint8Array(length);
+
+  if (typeof globalThis.crypto?.getRandomValues === 'function') {
+    globalThis.crypto.getRandomValues(arr);
+  } else {
+    // No Web Crypto available — refuse to generate weak codes
+    throw new Error('crypto.getRandomValues is required but not available');
+  }
+
   let result = '';
   for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
+    result += chars.charAt(arr[i] % chars.length);
   }
   return result;
 }

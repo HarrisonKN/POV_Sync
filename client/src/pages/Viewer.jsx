@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 import YouTubePlayer from '../components/YouTubePlayer';
 import StatusIndicators from '../components/StatusIndicators';
 import ErrorState from '../components/ErrorState';
+import ConfirmModal from '../components/ConfirmModal';
 import SessionRoomHeader from '../components/SessionRoomHeader';
 import { OFFSET_STEPS } from '../../../shared/constants.js';
 
@@ -25,7 +26,8 @@ export default function Viewer() {
   const [ending, setEnding] = useState(false);
   const [leaving, setLeaving] = useState(false);
 
-  // Per-stream offset map: { [streamId]: offsetSeconds }
+  // Modal state: { title, message, confirmLabel, onConfirm, variant, destructive }
+  const [modal, setModal] = useState(null);
   const [offsets, setOffsets] = useState({});
 
   // Sync status from server: { [streamId]: { confidence, startTimeAvailable } }
@@ -195,102 +197,90 @@ export default function Viewer() {
   useEffect(() => {
     if (!sessionId) return;
 
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsHost     = import.meta.env.VITE_WS_URL || `${wsProtocol}//${window.location.hostname}:3002`;
-    const ws         = new WebSocket(`${wsHost}/ws?sessionId=${sessionId}`);
-    wsRef.current = ws;
+    let active = true;
+    let ws = null;
 
-    ws.onopen = () => {
-      console.log('[WS] Connected to sync server');
+    const connect = async () => {
+      const token = await getAccessToken();
+      if (!active || !token) return;
 
-      // Register all known streams with the sync server so it can track them
-      // even after a server restart or page reload.
-      const currentStreams = streamsRef.current;
-      if (currentStreams.length > 0) {
-        ws.send(JSON.stringify({
-          type: 'REGISTER_STREAMS',
-          streams: currentStreams.map((s) => ({
-            id: s.id,
-            isAnchor: s.is_anchor,
-          })),
-        }));
-        currentStreams.forEach((s) => registeredStreamsRef.current.add(s.id));
-        console.log(`[WS] Registered ${currentStreams.length} streams with sync server`);
-      }
-    };
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsHost = import.meta.env.VITE_WS_URL || `${wsProtocol}//${window.location.hostname}:3002`;
+      ws = new WebSocket(`${wsHost}/ws?sessionId=${sessionId}&role=participant&token=${encodeURIComponent(token)}`);
+      wsRef.current = ws;
 
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
+      ws.onopen = () => {
+        console.log('[WS] Connected to sync server');
 
-        if (msg.type === 'SYNC_OFFSETS') {
-          const { offsets: serverOffsets, confidence, startTimesAvailable, timestamp } = msg;
+        const currentStreams = streamsRef.current;
+        if (currentStreams.length > 0) {
+          ws.send(JSON.stringify({
+            type: 'REGISTER_STREAMS',
+            streams: currentStreams.map((s) => ({
+              id: s.id,
+              isAnchor: s.is_anchor,
+            })),
+          }));
+          currentStreams.forEach((s) => registeredStreamsRef.current.add(s.id));
+          console.log(`[WS] Registered ${currentStreams.length} streams with sync server`);
+        }
+      };
 
-          // Store sync stats for status display
-          setSyncStats({
-            offsets: serverOffsets || {},
-            confidence: confidence || {},
-            startTimesAvailable: startTimesAvailable || {},
-            anchorStreamId: msg.anchorStreamId,
-            timestamp,
-          });
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
 
-          // Auto-apply UTC offsets from server when they arrive with full confidence
-          Object.entries(serverOffsets || {}).forEach(([streamId, serverOffset]) => {
-            if (serverOffset === null || serverOffset === undefined) return;
-            const conf = confidence?.[streamId] ?? 0;
-            if (conf < 1) return; // only apply when we have start times for both
+          if (msg.type === 'SYNC_OFFSETS') {
+            const { offsets: serverOffsets, confidence, startTimesAvailable, timestamp } = msg;
 
-            const currentOffset = offsetsRef.current[streamId] ?? 0;
-            const drift = Math.abs(serverOffset - currentOffset);
+            setSyncStats({
+              offsets: serverOffsets || {},
+              confidence: confidence || {},
+              startTimesAvailable: startTimesAvailable || {},
+              anchorStreamId: msg.anchorStreamId,
+              timestamp,
+            });
 
-            // Only update if there's a meaningful difference (>0.5s)
-            if (drift > 0.5 && Date.now() - lastSeekTs.current >= SEEK_COOLDOWN_MS) {
-              setOffsets((prev) => ({ ...prev, [streamId]: serverOffset }));
-              // Re-seek to new offset
-              const anchorId    = streamsRef.current.find((s) => s.is_anchor)?.id;
-              const anchorPlayer = anchorId ? playerRefs.current[anchorId] : null;
-              const stagePlayer  = playerRefs.current[streamId];
-              const filmPlayer   = playerRefs.current[`film-${streamId}`];
-              if (anchorPlayer && stagePlayer) {
-                try {
-                  const anchorTime = anchorPlayer.getCurrentTime?.() ?? 0;
-                  const targetTime = Math.max(0, anchorTime - serverOffset);
-                  lastSeekTs.current = Date.now();
-                  stagePlayer.seekTo(targetTime, true);
-                  filmPlayer?.seekTo(targetTime, true);
-                } catch (_) {}
+            Object.entries(serverOffsets || {}).forEach(([streamId, serverOffset]) => {
+              if (serverOffset === null || serverOffset === undefined) return;
+              const stream = streamsRef.current.find((s) => s.id === streamId);
+              if (!stream) return;
+              const currentOffset = typeof stream.offset_seconds === 'number' ? stream.offset_seconds : null;
+              const shouldUpdate = currentOffset === null || currentOffset === undefined || Math.abs(currentOffset - serverOffset) > 0.05;
+              if (shouldUpdate) {
+                setOffsets((prev) => ({ ...prev, [streamId]: serverOffset }));
               }
-            }
-          });
+            });
+          }
+        } catch (err) {
+          console.error('[WS] Failed to parse message:', err);
         }
+      };
 
-        if (msg.type === 'ANCHOR_REMOVED') {
-          console.warn('[WS] Anchor stream removed — host should promote a new anchor');
-          setAnchorDeadBanner(true);
-        }
+      ws.onerror = (err) => {
+        console.error('[WS] Error:', err);
+      };
 
-        if (msg.type === 'CONTROL_STATE') {
-          setControlHostUserId(msg.hostUserId ?? null);
-          setControlHolderUserId(msg.delegateeUserId ?? null);
+      ws.onclose = () => {
+        if (wsRef.current === ws) {
+          wsRef.current = null;
         }
-      } catch (err) {
-        console.error('[WS] Message parse error:', err);
-      }
+        console.log('[WS] Disconnected from sync server');
+      };
     };
 
-    ws.onerror = (err) => {
-      console.error('[WS] Connection error:', err);
-    };
-
-    ws.onclose = () => {
-      console.log('[WS] Disconnected from sync server');
-    };
+    connect();
 
     return () => {
-      ws.close();
+      active = false;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.close();
+      }
+      if (wsRef.current === ws) {
+        wsRef.current = null;
+      }
     };
-  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionId, getAccessToken]);
 
   // ── Synthetic start-time computation ──────────────────────────────────────
   // For live streams, getCurrentTime() returns seconds since the stream went
@@ -681,24 +671,31 @@ export default function Viewer() {
 
   // Delegate controls to another participant
   const handleDelegateControl = useCallback(async (delegateeUserId, displayName) => {
-    if (!confirm(`Give full controls to ${displayName}?`)) return;
-    try {
-      const token = await getAccessToken();
-      const res = await fetch(`/api/sessions/${sessionId}/delegate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token && { Authorization: `Bearer ${token}` }),
-        },
-        body: JSON.stringify({ delegateeUserId }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to delegate control');
+    const doDelegate = async () => {
+      try {
+        const token = await getAccessToken();
+        const res = await fetch(`/api/sessions/${sessionId}/delegate`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token && { Authorization: `Bearer ${token}` }),
+          },
+          body: JSON.stringify({ delegateeUserId }),
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || 'Failed to delegate control');
+        }
+      } catch (err) {
+        setModal({ title: 'Error', message: err.message, variant: 'alert', confirmLabel: 'OK' });
       }
-    } catch (err) {
-      alert(err.message);
-    }
+    };
+    setModal({
+      title: 'Delegate Controls',
+      message: `Give full controls to ${displayName}?`,
+      confirmLabel: 'Delegate',
+      onConfirm: doDelegate,
+    });
   }, [sessionId, getAccessToken]);
 
   // Revoke delegated controls — host takes them back
@@ -717,82 +714,104 @@ export default function Viewer() {
         throw new Error(data.error || 'Failed to revoke control');
       }
     } catch (err) {
-      alert(err.message);
+      setModal({ title: 'Error', message: err.message, variant: 'alert', confirmLabel: 'OK' });
     }
   }, [sessionId, getAccessToken]);
 
   // Promote a stream to anchor
   const handlePromoteAnchor = useCallback(async (streamId) => {
-    if (!confirm('Promote this stream to anchor? All offsets will recalculate.')) return;
-    try {
-      const token = await getAccessToken();
-      const res = await fetch(`/api/sessions/${sessionId}/promote-anchor`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token && { Authorization: `Bearer ${token}` }),
-        },
-        body: JSON.stringify({ streamId }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to promote anchor');
+    const doPromote = async () => {
+      try {
+        const token = await getAccessToken();
+        const res = await fetch(`/api/sessions/${sessionId}/promote-anchor`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token && { Authorization: `Bearer ${token}` }),
+          },
+          body: JSON.stringify({ streamId }),
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || 'Failed to promote anchor');
+        }
+        // The Supabase realtime subscription will push the stream UPDATE events
+      } catch (err) {
+        setModal({ title: 'Error', message: err.message, variant: 'alert', confirmLabel: 'OK' });
       }
-      // The Supabase realtime subscription will push the stream UPDATE events
-    } catch (err) {
-      alert(err.message);
-    }
+    };
+    setModal({
+      title: 'Promote Anchor',
+      message: 'Promote this stream to anchor? All offsets will recalculate.',
+      confirmLabel: 'Promote',
+      onConfirm: doPromote,
+    });
   }, [sessionId, getAccessToken]);
 
   // End session handler
-  async function handleEndSession() {
-    if (!confirm('End this session? It will be saved as a VOD.')) return;
-    setEnding(true);
-    try {
-      const token = await getAccessToken();
-      const res = await fetch(`/api/sessions/${sessionId}/end`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token && { Authorization: `Bearer ${token}` }),
-        },
-        body: JSON.stringify({ hostId: user.id }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to end session');
+  function handleEndSession() {
+    const doEnd = async () => {
+      setEnding(true);
+      try {
+        const token = await getAccessToken();
+        const res = await fetch(`/api/sessions/${sessionId}/end`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token && { Authorization: `Bearer ${token}` }),
+          },
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || 'Failed to end session');
+        }
+      } catch (err) {
+        setModal({ title: 'Error', message: err.message, variant: 'alert', confirmLabel: 'OK' });
+      } finally {
+        setEnding(false);
       }
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setEnding(false);
-    }
+    };
+    setModal({
+      title: 'End Session',
+      message: 'End this session? It will be saved as a VOD.',
+      confirmLabel: 'End Session',
+      destructive: true,
+      onConfirm: doEnd,
+    });
   }
 
   // Leave session handler — participants only
-  async function handleLeaveSession() {
-    if (!confirm('Leave this session? Your stream will be archived for the VOD.')) return;
-    setLeaving(true);
-    try {
-      const token = await getAccessToken();
-      const res = await fetch(`/api/sessions/${sessionId}/leave`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token && { Authorization: `Bearer ${token}` }),
-        },
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to leave session');
+  function handleLeaveSession() {
+    const doLeave = async () => {
+      setLeaving(true);
+      try {
+        const token = await getAccessToken();
+        const res = await fetch(`/api/sessions/${sessionId}/leave`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token && { Authorization: `Bearer ${token}` }),
+          },
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || 'Failed to leave session');
+        }
+        // Navigate back to home after leaving
+        navigate('/');
+      } catch (err) {
+        setModal({ title: 'Error', message: err.message, variant: 'alert', confirmLabel: 'OK' });
+      } finally {
+        setLeaving(false);
       }
-      // Navigate back to home after leaving
-      navigate('/');
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setLeaving(false);
-    }
+    };
+    setModal({
+      title: 'Leave Session',
+      message: 'Leave this session? Your stream will be archived for the VOD.',
+      confirmLabel: 'Leave',
+      destructive: true,
+      onConfirm: doLeave,
+    });
   }
 
   if (loading) {
@@ -817,14 +836,14 @@ export default function Viewer() {
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4">
       <SessionRoomHeader
-        title="Shared live room"
+        title="Live room"
         session={session}
         hostLabel={hostName}
         roleLabel={isHost ? 'Host control' : hasControl ? 'Delegated control' : 'Participant view'}
         roleTone={isHost ? 'host' : 'participant'}
         statusLabel={isVod ? 'VOD session' : 'Live session'}
         statusTone={isVod ? 'vod' : 'live'}
-        secondaryLabel={isHost ? 'You manage sync for everyone' : hasControl ? 'You can adjust sync for the room' : 'Following the host sync state'}
+        secondaryLabel={isHost ? 'You manage sync for everyone' : hasControl ? 'You can adjust sync for the room' : 'Following the host’s sync state'}
         className="mb-3 sm:mb-4"
       />
 
@@ -1081,6 +1100,22 @@ export default function Viewer() {
           onRevoke={handleRevokeControl}
         />
       )}
+
+      {/* Confirmation / alert modal */}
+      <ConfirmModal
+        open={!!modal}
+        title={modal?.title}
+        message={modal?.message}
+        confirmLabel={modal?.confirmLabel}
+        variant={modal?.variant ?? 'confirm'}
+        destructive={modal?.destructive ?? false}
+        onConfirm={() => {
+          const cb = modal?.onConfirm;
+          setModal(null);
+          cb?.();
+        }}
+        onCancel={() => setModal(null)}
+      />
     </div>
   );
 }

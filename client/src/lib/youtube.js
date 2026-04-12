@@ -1,8 +1,7 @@
 /**
  * YouTube IFrame Player API helper.
  *
- * Loads the YouTube IFrame API script once, then provides a factory
- * to create player instances. Used by the Viewer components.
+ * Loads the YouTube IFrame API script once. Used by the YouTubePlayer component.
  */
 
 let apiReady = false;
@@ -30,37 +29,4 @@ export function loadYouTubeAPI() {
   });
 
   return apiPromise;
-}
-
-/**
- * Create a YouTube player instance in the given DOM element.
- *
- * @param {string} elementId — ID of the DOM element to replace with the player
- * @param {string} videoId — YouTube video ID
- * @param {object} opts — Optional overrides (width, height, playerVars, events)
- * @returns {YT.Player}
- */
-export function createPlayer(elementId, videoId, opts = {}) {
-  const {
-    width = '100%',
-    height = '100%',
-    playerVars = {},
-    events = {},
-  } = opts;
-
-  return new window.YT.Player(elementId, {
-    videoId,
-    width,
-    height,
-    playerVars: {
-      autoplay: 1,
-      controls: 0,
-      modestbranding: 1,
-      rel: 0,
-      iv_load_policy: 3,  // hide annotations
-      playsinline: 1,
-      ...playerVars,
-    },
-    events,
-  });
 }

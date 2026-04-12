@@ -13,6 +13,7 @@ export default function Spectator() {
   const [mainStreamId, setMainStreamId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [syncStats, setSyncStats] = useState(null);
   // Saved offsets from DB — applied on VOD load
   const [offsets, setOffsets] = useState({});
   const visibleStreams = useMemo(() => (
@@ -27,6 +28,7 @@ export default function Spectator() {
   const playerRefs = useRef({});
   const isPlayingRef = useRef(true);
   const syncingRef = useRef(false);
+  const wsRef = useRef(null);
 
   // Fetch session on mount
   useEffect(() => {
@@ -111,26 +113,69 @@ export default function Spectator() {
     }
   }, [visibleStreams, mainStreamId]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="w-8 h-8 border-2 border-pov-accent border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
+  // Read-only live sync: spectators receive room offsets and status updates
+  // without sending control messages back to the server.
+  useEffect(() => {
+    if (!session?.id) return;
 
-  if (error) {
-    return (
-      <ErrorState
-        icon="📺"
-        title="Session not found"
-        message={error}
-        secondary={{ label: '← Home', to: '/' }}
-      />
-    );
-  }
+    let active = true;
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsHost = import.meta.env.VITE_WS_URL || `${wsProtocol}//${window.location.hostname}:3002`;
+    const ws = new WebSocket(`${wsHost}/ws?sessionId=${session.id}&role=spectator`);
+    wsRef.current = ws;
 
-  // Keep a ref to streams so callbacks stay stable
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+
+        if (msg.type === 'SYNC_OFFSETS') {
+          setSyncStats({
+            offsets: msg.offsets || {},
+            confidence: msg.confidence || {},
+            startTimesAvailable: msg.startTimesAvailable || {},
+            anchorStreamId: msg.anchorStreamId ?? null,
+            timestamp: msg.timestamp ?? null,
+          });
+
+          setOffsets((prev) => ({
+            ...prev,
+            ...(msg.offsets || {}),
+          }));
+        }
+
+        if (msg.type === 'ANCHOR_REMOVED') {
+          setSyncStats((prev) => ({ ...(prev || {}), anchorRemoved: true }));
+        }
+      } catch (err) {
+        console.error('[WS] Spectator message parse error:', err);
+      }
+    };
+
+    ws.onerror = (err) => {
+      console.error('[WS] Spectator error:', err);
+    };
+
+    ws.onclose = () => {
+      if (wsRef.current === ws) {
+        wsRef.current = null;
+      }
+      if (active) {
+        console.log('[WS] Spectator disconnected');
+      }
+    };
+
+    return () => {
+      active = false;
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.close();
+      }
+      if (wsRef.current === ws) {
+        wsRef.current = null;
+      }
+    };
+  }, [session?.id]);
+
+  // Keep refs to current values so callbacks stay stable (must be above early returns)
   const streamsRef = useRef(streams);
   useEffect(() => { streamsRef.current = visibleStreams; }, [visibleStreams]);
 
@@ -198,17 +243,38 @@ export default function Spectator() {
     setMainStreamId(newStreamId);
   }, [mainStreamId]);
 
+  // ── Early returns (all hooks are declared above) ────────────────────────────
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="w-8 h-8 border-2 border-pov-accent border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <ErrorState
+        icon="📺"
+        title="Session not found"
+        message={error}
+        secondary={{ label: '← Home', to: '/' }}
+      />
+    );
+  }
+
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4">
       <SessionRoomHeader
-        title="Shared spectator room"
+        title="Spectator room"
         session={session}
         hostLabel={hostName}
         roleLabel="Read-only view"
         roleTone="spectator"
         statusLabel={session?.status === 'live' ? 'Live session' : 'VOD session'}
         statusTone={session?.status === 'live' ? 'live' : 'vod'}
-        secondaryLabel={session?.status === 'live' ? 'Watching the same live room as participants' : 'Watching the saved VOD session'}
+        secondaryLabel={session?.status === 'live' ? 'Watching the live room in read-only mode' : 'Watching the saved VOD session'}
         className="mb-3 sm:mb-4"
       />
 
@@ -230,6 +296,21 @@ export default function Spectator() {
           {visibleStreams.length} stream{visibleStreams.length !== 1 ? 's' : ''}
         </span>
       </div>
+
+      {session?.status === 'live' && syncStats && (
+        <div className="mb-3 sm:mb-4 bg-pov-surface border border-pov-border rounded-lg px-3 sm:px-4 py-2 sm:py-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] sm:text-xs font-mono text-pov-muted">
+          <span className="text-pov-accent">Read-only live sync</span>
+          <span className="hidden sm:inline text-pov-border">|</span>
+          <span>
+            {Object.values(syncStats.startTimesAvailable || {}).filter(Boolean).length}/{visibleStreams.length} start times
+          </span>
+          {syncStats.timestamp && (
+            <span className="hidden sm:inline text-pov-muted/60">
+              updated {Math.max(0, Math.round((Date.now() - syncStats.timestamp) / 1000))}s ago
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Main Stage — all players stacked, only selected visible */}
       <div className="aspect-video bg-black border border-pov-border rounded-lg mb-2 sm:mb-3 overflow-hidden relative">

@@ -41,7 +41,7 @@ export default function SessionRoomHeader({
             {title || 'Shared session room'}
           </h2>
           <p className="text-sm text-pov-muted mt-1 leading-relaxed max-w-2xl">
-            {hostLabel} controls the session sync. Everyone in the room follows the same playback state,
+            {hostLabel} controls the session sync. Everyone in the room follows the same session state,
             while each person can still focus on their own POV.
           </p>
         </div>

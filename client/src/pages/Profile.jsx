@@ -27,6 +27,9 @@ export default function Profile() {
       if (!targetUserId) { setLoading(false); return; }
 
       try {
+        setHostedSessions([]);
+        setParticipatedSessions([]);
+
         if (isOwnProfile && ownProfile) {
           setProfile(ownProfile);
         } else {
@@ -58,6 +61,8 @@ export default function Profile() {
             .in('id', sessionIds)
             .order('created_at', { ascending: false });
           setParticipatedSessions(participated || []);
+        } else {
+          setParticipatedSessions([]);
         }
       } catch (err) {
         console.error('Error fetching profile:', err);
@@ -95,6 +100,7 @@ export default function Profile() {
 
   const vodSessions = allSessions.filter((s) => s.status === 'ended');
   const liveSessions = allSessions.filter((s) => s.status === 'live');
+  const latestVod = vodSessions[0] || null;
 
   const filteredSessions =
     activeTab === 'All' ? allSessions
@@ -193,6 +199,49 @@ export default function Profile() {
                 </span>
               </Link>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Recent VOD spotlight ───────────────────────────── */}
+      {latestVod && (
+        <div className="bg-pov-accent/10 border border-pov-accent/20 rounded-xl px-4 sm:px-5 py-4 mb-6 animate-in">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <p className="text-xs font-mono text-pov-accent flex items-center gap-2">
+              <span>📼</span>
+              Latest VOD
+            </p>
+            <Link
+              to={`/session/${latestVod.id}?pov=${targetUserId}`}
+              className="text-xs font-mono text-pov-accent hover:underline"
+            >
+              Open replay →
+            </Link>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
+            <div className="min-w-0">
+              <p className="text-sm text-pov-text font-medium truncate">
+                {(latestVod.streams || []).map((st) => st.display_name).join(', ') || 'Archived session'}
+              </p>
+              <p className="text-xs text-pov-muted mt-1">
+                Saved {latestVod.ended_at ? new Date(latestVod.ended_at).toLocaleString() : 'recently'}
+                {' '}· {latestVod.streams?.length || 0} POV{(latestVod.streams?.length || 0) !== 1 ? 's' : ''}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Link
+                to={`/session/${latestVod.id}?pov=${targetUserId}`}
+                className="inline-flex items-center justify-center text-xs font-semibold bg-pov-accent text-white rounded-lg px-3 py-2 hover:bg-pov-accent/90 transition-colors"
+              >
+                Watch VOD
+              </Link>
+              <button
+                onClick={() => setActiveTab('VODs')}
+                className="inline-flex items-center justify-center text-xs font-mono text-pov-accent border border-pov-accent/20 rounded-lg px-3 py-2 hover:bg-pov-accent/10 transition-colors"
+              >
+                View all VODs
+              </button>
+            </div>
           </div>
         </div>
       )}
