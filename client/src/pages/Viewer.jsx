@@ -6,11 +6,10 @@ import StreamPlayer from '../components/StreamPlayer';
 import StatusIndicators from '../components/StatusIndicators';
 import ErrorState from '../components/ErrorState';
 import ConfirmModal from '../components/ConfirmModal';
-import SessionRoomHeader from '../components/SessionRoomHeader';
 import { OFFSET_STEPS } from '../../../shared/constants.js';
 
 const ROOM_TILE_MIN_WIDTH = 180;
-const ROOM_TILE_MAX_WIDTH = 560;
+const ROOM_TILE_MAX_WIDTH = 840;
 const ROOM_TILE_DEFAULT_WIDTH = 300;
 
 export default function Viewer() {
@@ -43,6 +42,7 @@ export default function Viewer() {
   const [addPovDisplayName, setAddPovDisplayName] = useState('');
   const [addPovSubmitting, setAddPovSubmitting] = useState(false);
   const [addPovError, setAddPovError] = useState(null);
+  const [showSessionLinks, setShowSessionLinks] = useState(false);
 
   // Modal state: { title, message, confirmLabel, onConfirm, variant, destructive }
   const [modal, setModal] = useState(null);
@@ -433,6 +433,10 @@ export default function Viewer() {
   const hostStream = visibleStreams.find((s) => s.user_id === session?.host_id);
   const hostName = hostStream?.display_name ?? hostStream?.users?.display_name ?? 'Host';
   const roomTileMinWidth = Math.min(Math.max(roomTileWidth, ROOM_TILE_MIN_WIDTH), ROOM_TILE_MAX_WIDTH);
+  const wallItemCount = visibleStreams.length + (canAddPov ? 1 : 0);
+  const wallColumnCount = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(Math.max(wallItemCount, 1)))));
+  const wallGridMaxWidth = wallColumnCount * roomTileMinWidth + Math.max(0, wallColumnCount - 1) * 12;
+  const filmstripTileWidth = Math.min(360, Math.max(180, Math.round(roomTileMinWidth * 0.58)));
 
   // Derive a display-ready syncStats object.
   // Once the WebSocket sends a SYNC_OFFSETS message syncStats is populated with real data.
@@ -952,106 +956,118 @@ export default function Viewer() {
 
   return (
     <div className="w-full max-w-none px-3 sm:px-4 py-3 sm:py-4">
-      <SessionRoomHeader
-        title="Live room"
-        session={session}
-        hostLabel={hostName}
-        roleLabel={isHost ? 'Host control' : hasControl ? 'Delegated control' : 'Participant view'}
-        roleTone={isHost ? 'host' : 'participant'}
-        statusLabel={isVod ? 'VOD session' : 'Live session'}
-        statusTone={isVod ? 'vod' : 'live'}
-        secondaryLabel={isHost ? 'You manage sync for everyone' : hasControl ? 'You can adjust sync for the room' : 'Following the host’s sync state'}
-        className="mb-3 sm:mb-4"
-      />
-
-      {/* Session header bar */}
-      <div className="mb-3 sm:mb-4 rounded-xl border border-pov-border bg-pov-surface/60 px-3 py-3 sm:px-4 sm:py-3 backdrop-blur-sm">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-wrap">
-            <span
-              className={`text-[10px] sm:text-xs font-mono px-1.5 sm:px-2 py-1 rounded border flex-shrink-0 ${
-                !isVod
-                  ? 'bg-pov-success/10 border-pov-success/30 text-pov-success'
-                  : 'bg-pov-muted/10 border-pov-muted/30 text-pov-muted'
-              }`}
-            >
-              {!isVod ? '● LIVE' : '📼 VOD'}
-            </span>
-            <span className="text-[10px] sm:text-xs text-pov-muted font-mono">
-              {visibleStreams.length} stream{visibleStreams.length !== 1 ? 's' : ''}
-            </span>
-            {isVod && session?.ended_at && (
-              <span className="text-[10px] sm:text-xs text-pov-muted/60 font-mono hidden sm:inline">
-                {new Date(session.ended_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
-              </span>
-            )}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-            <button
-              type="button"
-              onClick={toggleViewMode}
-              className="text-[10px] sm:text-xs font-mono bg-pov-bg border border-pov-border text-pov-text hover:bg-pov-border/30 rounded px-2.5 sm:px-3 py-1.5 transition-colors flex-shrink-0"
-            >
-              {viewMode === 'wall' ? 'Stage view' : 'Wall view'}
-            </button>
-
-            <div className="flex min-w-[250px] flex-1 items-center gap-2 rounded-lg border border-pov-border bg-pov-bg px-3 py-2">
-              <span className="text-[10px] sm:text-xs font-mono text-pov-muted whitespace-nowrap">Scale</span>
-              <input
-                type="range"
-                min={ROOM_TILE_MIN_WIDTH}
-                max={ROOM_TILE_MAX_WIDTH}
-                step="20"
-                value={roomTileWidth}
-                onChange={(event) => setRoomTileWidth(Number(event.target.value))}
-                className="w-32 sm:w-44 accent-pov-accent"
-                aria-label="Set room layout scale"
-              />
-              <span className="w-12 text-right text-[10px] sm:text-xs font-mono text-pov-text tabular-nums">
-                {roomTileWidth}px
-              </span>
+      <div className="mb-3 sm:mb-4 rounded-2xl border border-pov-border bg-pov-surface/70 px-3 py-3 sm:px-4 sm:py-4 backdrop-blur-sm">
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div className="min-w-0 flex-1">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded-full border ${!isVod ? 'text-pov-success bg-pov-success/10 border-pov-success/20' : 'text-pov-warning bg-pov-warning/10 border-pov-warning/20'}`}>
+                  {isVod ? 'VOD session' : 'Live session'}
+                </span>
+                <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded-full border ${isHost ? 'text-pov-accent bg-pov-accent/10 border-pov-accent/20' : 'text-pov-success bg-pov-success/10 border-pov-success/20'}`}>
+                  {isHost ? 'Host control' : hasControl ? 'Delegated control' : 'Participant view'}
+                </span>
+                <span className="text-[10px] sm:text-xs text-pov-muted font-mono">
+                  {visibleStreams.length} stream{visibleStreams.length !== 1 ? 's' : ''}
+                </span>
+              </div>
+              <h1 className="text-lg sm:text-xl font-bold tracking-tight text-pov-text">Live room</h1>
+              <p className="mt-1 max-w-3xl text-sm leading-relaxed text-pov-muted">
+                {hostName} controls the session sync. Everyone in the room follows the same session state,
+                while each person can still focus on their own POV.
+              </p>
             </div>
 
-            {isHost && session?.status === 'live' && (
-              <button
-                onClick={handleEndSession}
-                disabled={ending}
-                className="text-[10px] sm:text-xs font-mono bg-pov-danger/10 border border-pov-danger/30 text-pov-danger hover:bg-pov-danger/20 rounded px-2.5 sm:px-3 py-1.5 transition-colors disabled:opacity-50 flex-shrink-0"
-              >
-                {ending ? 'Ending...' : '⏹ End Session'}
-              </button>
-            )}
-
-            {!isHost && session?.status === 'live' && (
-              <button
-                onClick={handleLeaveSession}
-                disabled={leaving}
-                className="text-[10px] sm:text-xs font-mono bg-pov-danger/10 border border-pov-danger/30 text-pov-danger hover:bg-pov-danger/20 rounded px-2.5 sm:px-3 py-1.5 transition-colors disabled:opacity-50 flex-shrink-0"
-              >
-                {leaving ? 'Leaving...' : '🚪 Leave'}
-              </button>
-            )}
+            <div className="grid gap-2 sm:grid-cols-3 xl:min-w-[360px]">
+              <InfoPill label="Session" value={session?.participant_link || session?.spectator_link || session?.id?.slice(0, 8) || 'session'} />
+              <InfoPill label="Host" value={hostName} />
+              <InfoPill label="State" value={isHost ? 'You manage sync for everyone' : hasControl ? 'You can adjust sync for the room' : 'Following the host’s sync state'} />
+            </div>
           </div>
+
+          <div className="flex flex-col gap-3 rounded-xl border border-pov-border/70 bg-pov-bg/50 px-3 py-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+              <button
+                type="button"
+                onClick={toggleViewMode}
+                className="text-[10px] sm:text-xs font-mono bg-pov-bg border border-pov-border text-pov-text hover:bg-pov-border/30 rounded px-2.5 sm:px-3 py-1.5 transition-colors flex-shrink-0"
+              >
+                {viewMode === 'wall' ? 'Stage view' : 'Wall view'}
+              </button>
+
+              <div className="flex min-w-[270px] flex-1 items-center gap-2 rounded-lg border border-pov-border bg-pov-bg px-3 py-2">
+                <span className="text-[10px] sm:text-xs font-mono text-pov-muted whitespace-nowrap">Scale</span>
+                <input
+                  type="range"
+                  min={ROOM_TILE_MIN_WIDTH}
+                  max={ROOM_TILE_MAX_WIDTH}
+                  step="20"
+                  value={roomTileWidth}
+                  onChange={(event) => setRoomTileWidth(Number(event.target.value))}
+                  className="w-36 sm:w-56 accent-pov-accent"
+                  aria-label="Set room layout scale"
+                />
+                <span className="w-14 text-right text-[10px] sm:text-xs font-mono text-pov-text tabular-nums">
+                  {roomTileWidth}px
+                </span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+              {isHost && session && !isVod && (
+                <button
+                  type="button"
+                  onClick={() => setShowSessionLinks((current) => !current)}
+                  className="text-[10px] sm:text-xs font-mono bg-pov-bg border border-pov-border text-pov-text hover:bg-pov-border/30 rounded px-2.5 sm:px-3 py-1.5 transition-colors"
+                >
+                  {showSessionLinks ? 'Hide links' : 'Share links'}
+                </button>
+              )}
+
+              {isHost && session?.status === 'live' && (
+                <button
+                  onClick={handleEndSession}
+                  disabled={ending}
+                  className="text-[10px] sm:text-xs font-mono bg-pov-danger/10 border border-pov-danger/30 text-pov-danger hover:bg-pov-danger/20 rounded px-2.5 sm:px-3 py-1.5 transition-colors disabled:opacity-50 flex-shrink-0"
+                >
+                  {ending ? 'Ending...' : '⏹ End Session'}
+                </button>
+              )}
+
+              {!isHost && session?.status === 'live' && (
+                <button
+                  onClick={handleLeaveSession}
+                  disabled={leaving}
+                  className="text-[10px] sm:text-xs font-mono bg-pov-danger/10 border border-pov-danger/30 text-pov-danger hover:bg-pov-danger/20 rounded px-2.5 sm:px-3 py-1.5 transition-colors disabled:opacity-50 flex-shrink-0"
+                >
+                  {leaving ? 'Leaving...' : '🚪 Leave'}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {isHost && session && !isVod && showSessionLinks && (
+            <div className="rounded-xl border border-pov-border/70 bg-pov-bg/40 px-3 py-3 sm:px-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h2 className="text-[10px] sm:text-xs font-mono text-pov-muted uppercase tracking-wider">
+                  Share with your squad
+                </h2>
+                <span className="text-[10px] sm:text-xs font-mono text-pov-muted/70">Host only</span>
+              </div>
+              <div className="space-y-2">
+                <LinkRow
+                  label="Participant"
+                  url={`${window.location.origin}/join/${session.participant_link}`}
+                />
+                <LinkRow
+                  label="Spectator"
+                  url={`${window.location.origin}/watch/${session.spectator_link}`}
+                />
+              </div>
+            </div>
+          )}
         </div>
       </div>
-
-      {/* Session links — host only, live sessions only */}
-      {isHost && session && !isVod && (
-        <div className="mb-3 sm:mb-4 bg-pov-surface border border-pov-border rounded-lg p-3 sm:p-4 space-y-2">
-          <h2 className="text-[10px] sm:text-xs font-mono text-pov-muted uppercase tracking-wider mb-2">
-            Share with your squad
-          </h2>
-          <LinkRow
-            label="Participant"
-            url={`${window.location.origin}/join/${session.participant_link}`}
-          />
-          <LinkRow
-            label="Spectator"
-            url={`${window.location.origin}/watch/${session.spectator_link}`}
-          />
-        </div>
-      )}
 
       {/* Participant context bar — non-host, live sessions only */}
       {!isHost && !isVod && session && (
@@ -1066,8 +1082,11 @@ export default function Viewer() {
 
       {viewMode === 'wall' ? (
         <div
-          className="grid gap-2 sm:gap-3 mb-2 sm:mb-3"
-          style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${roomTileMinWidth}px, ${roomTileMinWidth}px))` }}
+          className="grid gap-2 sm:gap-3 mb-2 sm:mb-3 mx-auto w-full justify-center"
+          style={{
+            gridTemplateColumns: `repeat(${wallColumnCount}, minmax(0, 1fr))`,
+            maxWidth: `${wallGridMaxWidth}px`,
+          }}
         >
           {visibleStreams.map((stream) => {
             const isActive = stream.id === mainStreamId;
@@ -1131,58 +1150,67 @@ export default function Viewer() {
       ) : (
         <>
           {/* Main Stage — shows the selected stream's player */}
-          <div className="aspect-video bg-black border border-pov-border rounded-lg mb-2 sm:mb-3 overflow-hidden relative" style={{ maxHeight: 'calc(100vh - 340px)', minHeight: '200px' }}>
-            {visibleStreams.length > 0 ? (
-              visibleStreams.map((stream) => (
-                <div
-                  key={`stage-${stream.id}`}
-                  className={`absolute inset-0 transition-opacity duration-200 ${
-                    stream.id === mainStreamId ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'
-                  }`}
-                >
-                  <StreamPlayer
-                    streamUrl={stream.youtube_url}
-                    platform={stream.platform}
-                    isMain={stream.id === mainStreamId}
-                    onReady={(player) => handlePlayerReady(stream.id, player)}
-                    onStateChange={(state) => handleStageStateChange(stream.id, state)}
-                    className="w-full h-full"
-                  />
-                  {/* Main stage name overlay */}
-                  {stream.id === mainStreamId && (
-                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-4 py-3 pointer-events-none">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-white">{stream.display_name}</span>
-                        <StatusIndicators
-                          stream={stream}
-                          isHost={stream.user_id === session?.host_id}
-                        />
+          <div className="mb-2 sm:mb-3 flex justify-center">
+            <div
+              className="aspect-video w-full bg-black border border-pov-border rounded-lg overflow-hidden relative mx-auto"
+              style={{
+                width: 'min(100%, calc((100vh - 360px) * 16 / 9))',
+                maxHeight: 'calc(100vh - 360px)',
+                minHeight: '220px',
+              }}
+            >
+              {visibleStreams.length > 0 ? (
+                visibleStreams.map((stream) => (
+                  <div
+                    key={`stage-${stream.id}`}
+                    className={`absolute inset-0 transition-opacity duration-200 ${
+                      stream.id === mainStreamId ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'
+                    }`}
+                  >
+                    <StreamPlayer
+                      streamUrl={stream.youtube_url}
+                      platform={stream.platform}
+                      isMain={stream.id === mainStreamId}
+                      onReady={(player) => handlePlayerReady(stream.id, player)}
+                      onStateChange={(state) => handleStageStateChange(stream.id, state)}
+                      className="w-full h-full"
+                    />
+                    {/* Main stage name overlay */}
+                    {stream.id === mainStreamId && (
+                      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-4 py-3 pointer-events-none">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-white">{stream.display_name}</span>
+                          <StatusIndicators
+                            stream={stream}
+                            isHost={stream.user_id === session?.host_id}
+                          />
+                        </div>
                       </div>
+                    )}
+                  </div>
+                ))
+              ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                  <div className="text-center">
+                    <p className="text-pov-muted text-sm">Waiting for streams to join...</p>
+                    <div className="mt-3 flex gap-2 justify-center">
+                      {[...Array(5)].map((_, i) => (
+                        <div
+                          key={i}
+                          className="w-3 h-3 bg-pov-border rounded-full animate-pulse"
+                          style={{ animationDelay: `${i * 150}ms` }}
+                        />
+                      ))}
                     </div>
-                  )}
-                </div>
-              ))
-            ) : (
-              <div className="w-full h-full flex items-center justify-center">
-                <div className="text-center">
-                  <p className="text-pov-muted text-sm">Waiting for streams to join...</p>
-                  <div className="mt-3 flex gap-2 justify-center">
-                    {[...Array(5)].map((_, i) => (
-                      <div
-                        key={i}
-                        className="w-3 h-3 bg-pov-border rounded-full animate-pulse"
-                        style={{ animationDelay: `${i * 150}ms` }}
-                      />
-                    ))}
                   </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           {/* Filmstrip — thumbnails that mirror each player's live frame */}
           <div className="grid gap-2 sm:gap-3 overflow-x-auto mb-2 pb-1"
-               style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${Math.round(roomTileMinWidth * 0.6)}px, ${Math.round(roomTileMinWidth * 0.6)}px))` }}>
+               style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${filmstripTileWidth}px, ${filmstripTileWidth}px))`, justifyContent: 'center' }}>
             {visibleStreams.map((stream) => {
               const isActive = stream.id === mainStreamId;
 
@@ -1462,6 +1490,15 @@ function AddPovModal({
 }
 
 // -- Sub-components --
+
+function InfoPill({ label, value }) {
+  return (
+    <div className="rounded-xl border border-pov-border/60 bg-pov-bg/60 px-3 py-2 min-w-0">
+      <p className="text-[9px] font-mono uppercase tracking-wider text-pov-muted">{label}</p>
+      <p className="text-xs sm:text-sm font-medium text-pov-text truncate mt-0.5">{value}</p>
+    </div>
+  );
+}
 
 function LinkRow({ label, url }) {
   const [copied, setCopied] = useState(false);
