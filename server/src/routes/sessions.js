@@ -122,11 +122,11 @@ router.get('/join/:code', async (req, res) => {
 
     const { data: session, error } = await supabaseAdmin
       .from('sessions')
-      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, created_at, ended_at, vod_ready_at, streams(id, display_name, user_id, youtube_url, offset_seconds, is_anchor, is_active, joined_at, left_at, users(avatar_url, display_name))')
+      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, created_at, ended_at, vod_ready_at, streams(id, display_name, user_id, youtube_url, offset_seconds, is_anchor, is_active, joined_at, left_at)')
       .eq('participant_link', code)
       .single();
 
-    console.log('[API] Join query result — data:', !!session, 'error:', error?.message ?? 'none');
+    console.log('[API] Join query result — data:', !!session, 'error:', error?.message ?? 'none', 'code:', error?.code ?? 'none');
 
     if (error || !session) {
       return res.status(404).json({ error: 'Session not found' });
@@ -146,7 +146,7 @@ router.get('/watch/:code', async (req, res) => {
 
     const { data: session, error } = await supabaseAdmin
       .from('sessions')
-      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, created_at, ended_at, vod_ready_at, streams(id, display_name, user_id, youtube_url, offset_seconds, is_anchor, is_active, joined_at, left_at, users(avatar_url, display_name))')
+      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, created_at, ended_at, vod_ready_at, streams(id, display_name, user_id, youtube_url, offset_seconds, is_anchor, is_active, joined_at, left_at)')
       .eq('spectator_link', code)
       .single();
 
