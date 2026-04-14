@@ -1,4 +1,3 @@
-import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
@@ -7,6 +6,9 @@ import { createServer } from 'http';
 import sessionRoutes from './routes/sessions.js';
 import { setupWebSocket } from './websocket/index.js';
 import { stopAllSessions } from './services/syncManager.js';
+import { loadServerEnv } from './lib/loadEnv.js';
+
+loadServerEnv();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

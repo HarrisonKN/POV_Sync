@@ -1,11 +1,20 @@
 import { createClient } from '@supabase/supabase-js';
+import { getServerEnvDiagnostics } from './loadEnv.js';
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceKey) {
-  throw new Error('Missing SUPABASE_URL, SUPABASE_ANON_KEY, or SUPABASE_SERVICE_ROLE_KEY in server env');
+  const diagnostics = getServerEnvDiagnostics();
+  const missing = Object.entries(diagnostics.present)
+    .filter(([, present]) => !present)
+    .map(([key]) => key)
+    .join(', ');
+
+  throw new Error(
+    `Missing server env vars: ${missing}. Checked process env and dotenv files: ${diagnostics.candidatePaths.join(', ')}`
+  );
 }
 
 // Public server client: anon key, no privileged bypass.

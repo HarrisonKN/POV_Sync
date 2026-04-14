@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../lib/supabase';
 import StreamPlayer from '../components/StreamPlayer';
+import StreamPreviewCard from '../components/StreamPreviewCard';
 import StatusIndicators from '../components/StatusIndicators';
 import ErrorState from '../components/ErrorState';
 import ConfirmModal from '../components/ConfirmModal';
@@ -11,6 +13,11 @@ import { OFFSET_STEPS } from '../../../shared/constants.js';
 const ROOM_TILE_MIN_WIDTH = 180;
 const ROOM_TILE_MAX_WIDTH = 840;
 const ROOM_TILE_DEFAULT_WIDTH = 300;
+const VIEW_MODE_OPTIONS = [
+  { id: 'stage', label: 'Stage view', shortLabel: 'Stage' },
+  { id: 'wall', label: 'Wall view', shortLabel: 'Wall' },
+  { id: 'cycle', label: 'Cycle view', shortLabel: 'Cycle' },
+];
 
 export default function Viewer() {
   const { sessionId } = useParams();
@@ -43,6 +50,15 @@ export default function Viewer() {
   const [addPovSubmitting, setAddPovSubmitting] = useState(false);
   const [addPovError, setAddPovError] = useState(null);
   const [showSessionLinks, setShowSessionLinks] = useState(false);
+  const [showMobileRoomMeta, setShowMobileRoomMeta] = useState(false);
+  const [showMobileScale, setShowMobileScale] = useState(false);
+  const [isRoomHeaderCollapsed, setIsRoomHeaderCollapsed] = useState(false);
+  const [cycleUiVisible, setCycleUiVisible] = useState(true);
+  const [cycleHoverStreamId, setCycleHoverStreamId] = useState(null);
+  const [isMobileLayout, setIsMobileLayout] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(max-width: 639px)').matches;
+  });
 
   // Modal state: { title, message, confirmLabel, onConfirm, variant, destructive }
   const [modal, setModal] = useState(null);
@@ -65,6 +81,64 @@ export default function Viewer() {
     } catch (_) {}
   }, [roomTileWidth]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const media = window.matchMedia('(max-width: 639px)');
+    const handleChange = () => setIsMobileLayout(media.matches);
+    handleChange();
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', handleChange);
+      return () => media.removeEventListener('change', handleChange);
+    }
+    media.addListener(handleChange);
+    return () => media.removeListener(handleChange);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileLayout) {
+      setShowMobileRoomMeta(false);
+      setShowMobileScale(false);
+    }
+  }, [isMobileLayout]);
+
+  useEffect(() => {
+    if (!isRoomHeaderCollapsed) return;
+    setShowMobileRoomMeta(false);
+    setShowMobileScale(false);
+    setShowSessionLinks(false);
+  }, [isRoomHeaderCollapsed]);
+
+  const revealCycleUi = useCallback(() => {
+    setCycleUiVisible(true);
+    if (cycleHideTimerRef.current) {
+      window.clearTimeout(cycleHideTimerRef.current);
+      cycleHideTimerRef.current = null;
+    }
+    cycleHideTimerRef.current = window.setTimeout(() => {
+      setCycleUiVisible(false);
+    }, 2200);
+  }, []);
+
+  useEffect(() => {
+    if (viewMode !== 'cycle') {
+      setCycleUiVisible(true);
+      setCycleHoverStreamId(null);
+      if (cycleHideTimerRef.current) {
+        window.clearTimeout(cycleHideTimerRef.current);
+        cycleHideTimerRef.current = null;
+      }
+      return undefined;
+    }
+
+    revealCycleUi();
+    return () => {
+      if (cycleHideTimerRef.current) {
+        window.clearTimeout(cycleHideTimerRef.current);
+        cycleHideTimerRef.current = null;
+      }
+    };
+  }, [revealCycleUi, viewMode]);
+
   // Player refs keyed by streamId (stage) and "film-<streamId>" (filmstrip)
   const playerRefs = useRef({});
   // Track which players have called onReady (for VOD autoplay from start)
@@ -82,6 +156,8 @@ export default function Viewer() {
   const saveTimers = useRef({});
   // WebSocket instance ref — allows handlePlayerReady to send start-time messages
   const wsRef = useRef(null);
+  const cycleHideTimerRef = useRef(null);
+  const cycleTouchStartRef = useRef(null);
 
   // Fetch session and streams on mount
   useEffect(() => {
@@ -437,6 +513,21 @@ export default function Viewer() {
   const wallColumnCount = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(Math.max(wallItemCount, 1)))));
   const wallGridMaxWidth = wallColumnCount * roomTileMinWidth + Math.max(0, wallColumnCount - 1) * 12;
   const filmstripTileWidth = Math.min(360, Math.max(180, Math.round(roomTileMinWidth * 0.58)));
+  const effectiveWallColumnCount = isMobileLayout ? Math.min(2, Math.max(1, wallItemCount)) : wallColumnCount;
+  const effectiveWallGridMaxWidth = isMobileLayout ? null : wallGridMaxWidth;
+  const effectiveFilmstripTileWidth = isMobileLayout ? Math.min(240, Math.max(176, Math.round(roomTileMinWidth * 0.52))) : filmstripTileWidth;
+  const cycleActiveIndex = useMemo(
+    () => visibleStreams.findIndex((stream) => stream.id === mainStreamId),
+    [visibleStreams, mainStreamId]
+  );
+  const cycleHoverStream = visibleStreams.find((stream) => stream.id === cycleHoverStreamId) ?? null;
+  const cycleInfoStream = cycleHoverStream ?? visibleStreams[cycleActiveIndex] ?? visibleStreams[0] ?? null;
+
+  useEffect(() => {
+    if (!visibleStreams.some((stream) => stream.id === cycleHoverStreamId)) {
+      setCycleHoverStreamId(null);
+    }
+  }, [cycleHoverStreamId, visibleStreams]);
 
   // Derive a display-ready syncStats object.
   // Once the WebSocket sends a SYNC_OFFSETS message syncStats is populated with real data.
@@ -459,6 +550,60 @@ export default function Viewer() {
   const offsetsRef = useRef(offsets);
   useEffect(() => { offsetsRef.current = offsets; }, [offsets]);
 
+  const syncMirroredPair = useCallback((streamId, preferredPlayerId = streamId, threshold = 0.35) => {
+    const stagePlayer = playerRefs.current[streamId];
+    const filmPlayer = playerRefs.current[`film-${streamId}`];
+
+    if (!stagePlayer || !filmPlayer || stagePlayer === filmPlayer) return;
+
+    const useFilmAsSource = preferredPlayerId === `film-${streamId}`;
+    const sourcePlayer = useFilmAsSource ? filmPlayer : stagePlayer;
+    const targetPlayer = useFilmAsSource ? stagePlayer : filmPlayer;
+
+    try {
+      const sourceTime = sourcePlayer.getCurrentTime?.();
+      const targetTime = targetPlayer.getCurrentTime?.();
+
+      if (Number.isFinite(sourceTime) && Number.isFinite(targetTime) && Math.abs(sourceTime - targetTime) > threshold) {
+        lastSeekTs.current = Date.now();
+        targetPlayer.seekTo?.(sourceTime, true);
+      }
+
+      const YT = window.YT;
+      const sourceState = sourcePlayer.getPlayerState?.();
+      if (!YT || typeof sourceState !== 'number') return;
+
+      if (sourceState === YT.PlayerState.PLAYING) {
+        targetPlayer.playVideo?.();
+      } else if (sourceState === YT.PlayerState.PAUSED) {
+        targetPlayer.pauseVideo?.();
+      }
+    } catch (_) {}
+  }, []);
+
+  useEffect(() => {
+    if (!mainStreamId) return;
+    const timeoutId = window.setTimeout(() => {
+      syncMirroredPair(mainStreamId, `film-${mainStreamId}`);
+    }, 120);
+    return () => window.clearTimeout(timeoutId);
+  }, [mainStreamId, syncMirroredPair]);
+
+  useEffect(() => {
+    const PAIR_DRIFT_THRESHOLD = 0.35;
+    const intervalId = setInterval(() => {
+      if (syncingRef.current) return;
+      if (Date.now() - lastSeekTs.current < SEEK_COOLDOWN_MS) return;
+
+      streamsRef.current.forEach((stream) => {
+        const preferredPlayerId = stream.id === mainStreamId ? stream.id : `film-${stream.id}`;
+        syncMirroredPair(stream.id, preferredPlayerId, PAIR_DRIFT_THRESHOLD);
+      });
+    }, 2500);
+
+    return () => clearInterval(intervalId);
+  }, [mainStreamId, syncMirroredPair]);
+
   // Store player ref when a YT player is ready.
   // Stage players use plain streamId; filmstrip players use "film-<streamId>".
   // For VODs, once all stage players are ready we seek each to its saved offset
@@ -474,6 +619,8 @@ export default function Viewer() {
     if (isFilm) return;
 
     const sessionStatus = sessionRef.current?.status;
+
+    syncMirroredPair(streamId, streamId);
 
     // ── Report synthetic start time to sync server ─────────────────────────
     // For live YouTube streams, getCurrentTime() returns elapsed seconds since
@@ -528,7 +675,7 @@ export default function Viewer() {
       try { playerRefs.current[stream.id]?.seekTo(target, true); } catch (_) {}
       try { playerRefs.current[`film-${stream.id}`]?.seekTo(target, true); } catch (_) {}
     });
-  }, []);
+  }, [getAccessToken, sessionId, syncMirroredPair]);
 
   // Keep a stable ref to the session object for use inside callbacks
   const sessionRef = useRef(session);
@@ -605,12 +752,37 @@ export default function Viewer() {
 
   const handleSwapStream = useCallback((newStreamId) => {
     if (newStreamId === mainStreamId) return;
+    syncMirroredPair(newStreamId, `film-${newStreamId}`);
     setMainStreamId(newStreamId);
-  }, [mainStreamId]);
+  }, [mainStreamId, syncMirroredPair]);
 
-  const toggleViewMode = useCallback(() => {
-    setViewMode((mode) => (mode === 'wall' ? 'stage' : 'wall'));
+  const selectViewMode = useCallback((mode) => {
+    setViewMode(mode);
   }, []);
+
+  const handleCycleStep = useCallback((direction) => {
+    if (!visibleStreams.length) return;
+    const currentIndex = visibleStreams.findIndex((stream) => stream.id === mainStreamId);
+    const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+    const nextIndex = (safeIndex + direction + visibleStreams.length) % visibleStreams.length;
+    const nextStreamId = visibleStreams[nextIndex]?.id;
+    if (!nextStreamId) return;
+    handleSwapStream(nextStreamId);
+    setCycleHoverStreamId(nextStreamId);
+    revealCycleUi();
+  }, [handleSwapStream, mainStreamId, revealCycleUi, visibleStreams]);
+
+  useEffect(() => {
+    if (viewMode !== 'cycle') return undefined;
+
+    const handleKey = (event) => {
+      if (event.key === 'ArrowLeft') handleCycleStep(-1);
+      if (event.key === 'ArrowRight') handleCycleStep(1);
+    };
+
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [handleCycleStep, viewMode]);
 
   const openAddPovModal = useCallback(() => {
     if (!isHost || isVod) return;
@@ -955,45 +1127,184 @@ export default function Viewer() {
   }
 
   return (
-    <div className="w-full max-w-none px-3 sm:px-4 py-3 sm:py-4">
-      <div className="mb-3 sm:mb-4 rounded-2xl border border-pov-border bg-pov-surface/70 px-3 py-3 sm:px-4 sm:py-4 backdrop-blur-sm">
+    <div className="w-full max-w-none px-2.5 sm:px-4 py-3 sm:py-4">
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.28, ease: 'easeOut' }}
+        className="glass-panel mb-3 sm:mb-4 rounded-2xl border border-white/10 px-3 py-3 sm:px-4 sm:py-4"
+      >
         <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded-full border ${!isVod ? 'text-pov-success bg-pov-success/10 border-pov-success/20' : 'text-pov-warning bg-pov-warning/10 border-pov-warning/20'}`}>
                   {isVod ? 'VOD session' : 'Live session'}
                 </span>
-                <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded-full border ${isHost ? 'text-pov-accent bg-pov-accent/10 border-pov-accent/20' : 'text-pov-success bg-pov-success/10 border-pov-success/20'}`}>
+                <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded-full border ${isHost ? 'text-pov-accent bg-pov-accent/10 border-pov-accent/20' : hasControl ? 'text-pov-success bg-pov-success/10 border-pov-success/20' : 'text-pov-muted bg-pov-muted/10 border-pov-muted/20'}`}>
                   {isHost ? 'Host control' : hasControl ? 'Delegated control' : 'Participant view'}
                 </span>
                 <span className="text-[10px] sm:text-xs text-pov-muted font-mono">
                   {visibleStreams.length} stream{visibleStreams.length !== 1 ? 's' : ''}
                 </span>
+                <span className="text-[10px] sm:text-xs text-pov-muted/70 font-mono">
+                  {VIEW_MODE_OPTIONS.find((mode) => mode.id === viewMode)?.shortLabel || 'Stage'}
+                </span>
               </div>
               <h1 className="text-lg sm:text-xl font-bold tracking-tight text-pov-text">Live room</h1>
-              <p className="mt-1 max-w-3xl text-sm leading-relaxed text-pov-muted">
-                {hostName} controls the session sync. Everyone in the room follows the same session state,
-                while each person can still focus on their own POV.
+              <p className="mt-1 text-xs sm:text-sm leading-relaxed text-pov-muted">
+                {isRoomHeaderCollapsed
+                  ? `${hostName} · ${session?.participant_link || session?.spectator_link || session?.id?.slice(0, 8) || 'session'}`
+                  : `${hostName} controls the session sync. Everyone in the room follows the same session state, while each person can still focus on their own POV.`}
               </p>
             </div>
 
-            <div className="grid gap-2 sm:grid-cols-3 xl:min-w-[360px]">
-              <InfoPill label="Session" value={session?.participant_link || session?.spectator_link || session?.id?.slice(0, 8) || 'session'} />
-              <InfoPill label="Host" value={hostName} />
-              <InfoPill label="State" value={isHost ? 'You manage sync for everyone' : hasControl ? 'You can adjust sync for the room' : 'Following the host’s sync state'} />
-            </div>
+            <button
+              type="button"
+              onClick={() => setIsRoomHeaderCollapsed((current) => !current)}
+              className="shrink-0 rounded-xl border border-pov-border bg-pov-bg px-3 py-2 text-[10px] sm:text-xs font-mono text-pov-text transition-colors hover:bg-pov-border/30"
+              aria-expanded={!isRoomHeaderCollapsed}
+              aria-label={isRoomHeaderCollapsed ? 'Expand live room panel' : 'Collapse live room panel'}
+            >
+              {isRoomHeaderCollapsed ? 'Expand ▾' : 'Collapse ▴'}
+            </button>
           </div>
 
-          <div className="flex flex-col gap-3 rounded-xl border border-pov-border/70 bg-pov-bg/50 px-3 py-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+          <AnimatePresence initial={false}>
+            {!isRoomHeaderCollapsed && (
+              <motion.div
+                initial={{ opacity: 0, height: 0, y: -6 }}
+                animate={{ opacity: 1, height: 'auto', y: 0 }}
+                exit={{ opacity: 0, height: 0, y: -6 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
+                className="overflow-hidden"
+              >
+                <div className="flex flex-col gap-4 pt-1">
+                  <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                    <div className="hidden min-w-0 flex-1 xl:block" />
+
+                    <div className="hidden gap-2 sm:grid sm:grid-cols-3 xl:min-w-[360px]">
+                      <InfoPill label="Session" value={session?.participant_link || session?.spectator_link || session?.id?.slice(0, 8) || 'session'} />
+                      <InfoPill label="Host" value={hostName} />
+                      <InfoPill label="State" value={isHost ? 'You manage sync for everyone' : hasControl ? 'You can adjust sync for the room' : 'Following the host’s sync state'} />
+                    </div>
+                  </div>
+
+                  {isMobileLayout && showMobileRoomMeta && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -8 }}
+                      transition={{ duration: 0.18, ease: 'easeOut' }}
+                      className="grid gap-2"
+                    >
+                      <InfoPill label="Session" value={session?.participant_link || session?.spectator_link || session?.id?.slice(0, 8) || 'session'} />
+                      <InfoPill label="Host" value={hostName} />
+                      <InfoPill label="State" value={isHost ? 'You manage sync for everyone' : hasControl ? 'You can adjust sync for the room' : 'Following the host’s sync state'} />
+                    </motion.div>
+                  )}
+
+                  <div className="glass-card flex flex-col gap-3 rounded-xl border border-white/8 px-3 py-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex sm:hidden flex-wrap items-center gap-2">
+              {VIEW_MODE_OPTIONS.map((mode) => (
+                <button
+                  key={mode.id}
+                  type="button"
+                  onClick={() => selectViewMode(mode.id)}
+                  className={`text-[10px] font-mono border rounded-lg px-3 py-2 transition-colors ${
+                    viewMode === mode.id
+                      ? 'border-pov-accent/40 bg-pov-accent/12 text-pov-text'
+                      : 'bg-pov-bg border-pov-border text-pov-text hover:bg-pov-border/30'
+                  }`}
+                >
+                  {mode.shortLabel}
+                </button>
+              ))}
               <button
                 type="button"
-                onClick={toggleViewMode}
-                className="text-[10px] sm:text-xs font-mono bg-pov-bg border border-pov-border text-pov-text hover:bg-pov-border/30 rounded px-2.5 sm:px-3 py-1.5 transition-colors flex-shrink-0"
+                onClick={() => setShowMobileRoomMeta((current) => !current)}
+                className="text-[10px] font-mono bg-pov-bg border border-pov-border text-pov-text hover:bg-pov-border/30 rounded-lg px-3 py-2 transition-colors"
               >
-                {viewMode === 'wall' ? 'Stage view' : 'Wall view'}
+                {showMobileRoomMeta ? 'Hide info' : 'Room info'}
               </button>
+              <button
+                type="button"
+                onClick={() => setShowMobileScale((current) => !current)}
+                className="text-[10px] font-mono bg-pov-bg border border-pov-border text-pov-text hover:bg-pov-border/30 rounded-lg px-3 py-2 transition-colors"
+              >
+                {showMobileScale ? 'Hide scale' : 'Scale'}
+              </button>
+              {isHost && session && !isVod && (
+                <button
+                  type="button"
+                  onClick={() => setShowSessionLinks((current) => !current)}
+                  className="text-[10px] font-mono bg-pov-bg border border-pov-border text-pov-text hover:bg-pov-border/30 rounded-lg px-3 py-2 transition-colors"
+                >
+                  {showSessionLinks ? 'Hide links' : 'Share'}
+                </button>
+              )}
+              {isHost && session?.status === 'live' && (
+                <button
+                  onClick={handleEndSession}
+                  disabled={ending}
+                  className="text-[10px] font-mono bg-pov-danger/10 border border-pov-danger/30 text-pov-danger hover:bg-pov-danger/20 rounded-lg px-3 py-2 transition-colors disabled:opacity-50"
+                >
+                  {ending ? 'Ending...' : 'End'}
+                </button>
+              )}
+              {!isHost && session?.status === 'live' && (
+                <button
+                  onClick={handleLeaveSession}
+                  disabled={leaving}
+                  className="text-[10px] font-mono bg-pov-danger/10 border border-pov-danger/30 text-pov-danger hover:bg-pov-danger/20 rounded-lg px-3 py-2 transition-colors disabled:opacity-50"
+                >
+                  {leaving ? 'Leaving...' : 'Leave'}
+                </button>
+              )}
+            </div>
+
+            {isMobileLayout && showMobileScale && (
+              <motion.div
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.18, ease: 'easeOut' }}
+                className="flex items-center gap-2 rounded-lg border border-pov-border bg-pov-bg px-3 py-3 sm:hidden"
+              >
+                <span className="text-[10px] font-mono text-pov-muted whitespace-nowrap">Scale</span>
+                <input
+                  type="range"
+                  min={ROOM_TILE_MIN_WIDTH}
+                  max={ROOM_TILE_MAX_WIDTH}
+                  step="20"
+                  value={roomTileWidth}
+                  onChange={(event) => setRoomTileWidth(Number(event.target.value))}
+                  className="w-full accent-pov-accent"
+                  aria-label="Set room layout scale"
+                />
+                <span className="w-12 text-right text-[10px] font-mono text-pov-text tabular-nums">
+                  {roomTileWidth}px
+                </span>
+              </motion.div>
+            )}
+
+            <div className="hidden sm:flex flex-wrap items-center gap-2 sm:gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                {VIEW_MODE_OPTIONS.map((mode) => (
+                  <button
+                    key={mode.id}
+                    type="button"
+                    onClick={() => selectViewMode(mode.id)}
+                    className={`text-[10px] sm:text-xs font-mono border rounded px-2.5 sm:px-3 py-1.5 transition-colors flex-shrink-0 ${
+                      viewMode === mode.id
+                        ? 'border-pov-accent/40 bg-pov-accent/12 text-pov-text'
+                        : 'bg-pov-bg border-pov-border text-pov-text hover:bg-pov-border/30'
+                    }`}
+                  >
+                    {mode.label}
+                  </button>
+                ))}
+              </div>
 
               <div className="flex min-w-[270px] flex-1 items-center gap-2 rounded-lg border border-pov-border bg-pov-bg px-3 py-2">
                 <span className="text-[10px] sm:text-xs font-mono text-pov-muted whitespace-nowrap">Scale</span>
@@ -1013,7 +1324,7 @@ export default function Viewer() {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <div className="hidden sm:flex flex-wrap items-center gap-2 sm:gap-3">
               {isHost && session && !isVod && (
                 <button
                   type="button"
@@ -1044,30 +1355,43 @@ export default function Viewer() {
                 </button>
               )}
             </div>
-          </div>
 
-          {isHost && session && !isVod && showSessionLinks && (
-            <div className="rounded-xl border border-pov-border/70 bg-pov-bg/40 px-3 py-3 sm:px-4">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <h2 className="text-[10px] sm:text-xs font-mono text-pov-muted uppercase tracking-wider">
-                  Share with your squad
-                </h2>
-                <span className="text-[10px] sm:text-xs font-mono text-pov-muted/70">Host only</span>
-              </div>
-              <div className="space-y-2">
-                <LinkRow
-                  label="Participant"
-                  url={`${window.location.origin}/join/${session.participant_link}`}
-                />
-                <LinkRow
-                  label="Spectator"
-                  url={`${window.location.origin}/watch/${session.spectator_link}`}
-                />
-              </div>
-            </div>
-          )}
+                  </div>
+
+                  <AnimatePresence initial={false}>
+                    {isHost && session && !isVod && showSessionLinks && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -8, scale: 0.985 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -8, scale: 0.985 }}
+                      transition={{ duration: 0.22, ease: 'easeOut' }}
+                      className="glass-card rounded-xl border border-white/8 px-3 py-3 sm:px-4"
+                    >
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <h2 className="text-[10px] sm:text-xs font-mono text-pov-muted uppercase tracking-wider">
+                          Share with your squad
+                        </h2>
+                        <span className="text-[10px] sm:text-xs font-mono text-pov-muted/70">Host only</span>
+                      </div>
+                      <div className="space-y-2">
+                        <LinkRow
+                          label="Participant"
+                          url={`${window.location.origin}/join/${session.participant_link}`}
+                        />
+                        <LinkRow
+                          label="Spectator"
+                          url={`${window.location.origin}/watch/${session.spectator_link}`}
+                        />
+                      </div>
+                    </motion.div>
+                  )}
+                  </AnimatePresence>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
-      </div>
+      </motion.div>
 
       {/* Participant context bar — non-host, live sessions only */}
       {!isHost && !isVod && session && (
@@ -1084,8 +1408,8 @@ export default function Viewer() {
         <div
           className="grid gap-2 sm:gap-3 mb-2 sm:mb-3 mx-auto w-full justify-center"
           style={{
-            gridTemplateColumns: `repeat(${wallColumnCount}, minmax(0, 1fr))`,
-            maxWidth: `${wallGridMaxWidth}px`,
+            gridTemplateColumns: `repeat(${effectiveWallColumnCount}, minmax(0, 1fr))`,
+            ...(effectiveWallGridMaxWidth ? { maxWidth: `${effectiveWallGridMaxWidth}px` } : {}),
           }}
         >
           {visibleStreams.map((stream) => {
@@ -1093,9 +1417,12 @@ export default function Viewer() {
 
             return (
               <div key={`wall-wrap-${stream.id}`} className="flex flex-col gap-1">
-                <button
+                <motion.button
+                  layout
+                  whileHover={{ y: -2, scale: 1.005 }}
+                  whileTap={{ scale: 0.99 }}
                   onClick={() => handleSwapStream(stream.id)}
-                  className={`relative aspect-video bg-black rounded-lg overflow-hidden border-2 transition-all ${
+                  className={`relative aspect-video bg-black rounded-2xl overflow-hidden border-2 transition-all ${
                     isActive ? 'border-pov-accent shadow-lg shadow-pov-accent/20' : 'border-pov-border hover:border-pov-muted'
                   }`}
                 >
@@ -1105,7 +1432,6 @@ export default function Viewer() {
                     isMain={stream.id === mainStreamId}
                     onReady={(player) => {
                       handlePlayerReady(stream.id, player);
-                      playerRefs.current[`film-${stream.id}`] = player;
                     }}
                     onStateChange={(state) => handleStageStateChange(stream.id, state)}
                     className="w-full h-full"
@@ -1121,9 +1447,9 @@ export default function Viewer() {
                     </div>
                   </div>
                   {isActive && <div className="absolute top-0 left-0 right-0 h-0.5 bg-pov-accent" />}
-                </button>
+                </motion.button>
 
-                {hasControl && !isVod && (
+                {hasControl && !isVod && (!isMobileLayout || isActive) && (
                   <OffsetControls
                     streamId={stream.id}
                     isAnchor={stream.is_anchor}
@@ -1147,12 +1473,126 @@ export default function Viewer() {
             </div>
           )}
         </div>
+      ) : viewMode === 'cycle' ? (
+        <div className="mb-2 sm:mb-3">
+          <div
+            className="relative overflow-hidden rounded-[1.5rem] border border-white/10 bg-black shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
+            onMouseMove={revealCycleUi}
+            onClick={revealCycleUi}
+            onTouchStart={(event) => {
+              cycleTouchStartRef.current = event.changedTouches[0]?.clientX ?? null;
+              revealCycleUi();
+            }}
+            onTouchEnd={(event) => {
+              const startX = cycleTouchStartRef.current;
+              if (startX === null || startX === undefined) return;
+              const endX = event.changedTouches[0]?.clientX ?? startX;
+              const delta = endX - startX;
+              if (Math.abs(delta) > 48) {
+                handleCycleStep(delta < 0 ? 1 : -1);
+              }
+              cycleTouchStartRef.current = null;
+            }}
+            style={{
+              minHeight: isMobileLayout ? '70vh' : 'min(78vh, 920px)',
+              height: isMobileLayout ? '70vh' : 'min(78vh, 920px)',
+            }}
+          >
+            {visibleStreams.length > 0 ? (
+              visibleStreams.map((stream) => (
+                <motion.div
+                  key={`cycle-${stream.id}`}
+                  initial={false}
+                  animate={{ opacity: stream.id === mainStreamId ? 1 : 0, scale: stream.id === mainStreamId ? 1 : 1.01 }}
+                  transition={{ duration: 0.22, ease: 'easeOut' }}
+                  className={`absolute inset-0 ${stream.id === mainStreamId ? 'z-10' : 'z-0 pointer-events-none'}`}
+                >
+                  <StreamPlayer
+                    streamUrl={stream.youtube_url}
+                    platform={stream.platform}
+                    isMain={stream.id === mainStreamId}
+                    onReady={(player) => handlePlayerReady(stream.id, player)}
+                    onStateChange={(state) => handleStageStateChange(stream.id, state)}
+                    className="h-full w-full"
+                  />
+                </motion.div>
+              ))
+            ) : (
+              <div className="flex h-full items-center justify-center">
+                <div className="text-center">
+                  <p className="text-pov-muted text-sm">Waiting for streams to join...</p>
+                </div>
+              </div>
+            )}
+
+            {visibleStreams.length > 0 && (
+              <>
+                <div className={`pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/70 via-black/20 to-transparent px-4 py-5 transition-opacity duration-200 ${cycleUiVisible ? 'opacity-100' : 'opacity-0'}`}>
+                  <div className="max-w-3xl">
+                    <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-white/14 bg-black/25 px-3 py-1 text-[10px] font-mono uppercase tracking-[0.18em] text-white/70 backdrop-blur-md">
+                      <span>Current POV</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-xl font-semibold text-white sm:text-3xl">
+                        {visibleStreams[cycleActiveIndex]?.display_name || 'POV'}
+                      </span>
+                      {visibleStreams[cycleActiveIndex] && (
+                        <StatusIndicators
+                          stream={visibleStreams[cycleActiveIndex]}
+                          isHost={visibleStreams[cycleActiveIndex].user_id === session?.host_id}
+                          isControlDelegated={!!controlHolderUserId && visibleStreams[cycleActiveIndex].user_id === controlHolderUserId}
+                        />
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleCycleStep(-1)}
+                  onMouseEnter={revealCycleUi}
+                  className={`absolute left-3 top-1/2 z-30 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-full border border-white/14 bg-black/20 text-xl text-white shadow-lg backdrop-blur-md transition-opacity duration-200 sm:left-4 sm:h-14 sm:w-14 ${cycleUiVisible ? 'opacity-100' : 'opacity-0'}`}
+                  aria-label="Previous POV"
+                >
+                  ←
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleCycleStep(1)}
+                  onMouseEnter={revealCycleUi}
+                  className={`absolute right-3 top-1/2 z-30 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-full border border-white/14 bg-black/20 text-xl text-white shadow-lg backdrop-blur-md transition-opacity duration-200 sm:right-4 sm:h-14 sm:w-14 ${cycleUiVisible ? 'opacity-100' : 'opacity-0'}`}
+                  aria-label="Next POV"
+                >
+                  →
+                </button>
+
+                <CycleViewPicker
+                  streams={visibleStreams}
+                  activeStreamId={mainStreamId}
+                  infoStreamId={cycleInfoStream?.id ?? mainStreamId}
+                  visible={cycleUiVisible}
+                  onHoverStream={(streamId) => {
+                    setCycleHoverStreamId(streamId);
+                    revealCycleUi();
+                  }}
+                  onLeave={() => setCycleHoverStreamId(mainStreamId)}
+                  onSelectStream={(streamId) => {
+                    handleSwapStream(streamId);
+                    setCycleHoverStreamId(streamId);
+                    revealCycleUi();
+                  }}
+                />
+              </>
+            )}
+          </div>
+        </div>
       ) : (
         <>
           {/* Main Stage — shows the selected stream's player */}
           <div className="mb-2 sm:mb-3 flex justify-center">
-            <div
-              className="aspect-video w-full bg-black border border-pov-border rounded-lg overflow-hidden relative mx-auto"
+            <motion.div
+              layout
+              className="glass-card aspect-video w-full border border-white/10 rounded-2xl overflow-hidden relative mx-auto"
               style={{
                 width: 'min(100%, calc((100vh - 360px) * 16 / 9))',
                 maxHeight: 'calc(100vh - 360px)',
@@ -1161,8 +1601,12 @@ export default function Viewer() {
             >
               {visibleStreams.length > 0 ? (
                 visibleStreams.map((stream) => (
-                  <div
+                  <motion.div
+                    layout
                     key={`stage-${stream.id}`}
+                    initial={false}
+                    animate={{ opacity: stream.id === mainStreamId ? 1 : 0, scale: stream.id === mainStreamId ? 1 : 0.985 }}
+                    transition={{ duration: 0.22, ease: 'easeOut' }}
                     className={`absolute inset-0 transition-opacity duration-200 ${
                       stream.id === mainStreamId ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'
                     }`}
@@ -1187,7 +1631,7 @@ export default function Viewer() {
                         </div>
                       </div>
                     )}
-                  </div>
+                  </motion.div>
                 ))
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
@@ -1205,54 +1649,34 @@ export default function Viewer() {
                   </div>
                 </div>
               )}
-            </div>
+            </motion.div>
           </div>
 
-          {/* Filmstrip — thumbnails that mirror each player's live frame */}
-          <div className="grid gap-2 sm:gap-3 overflow-x-auto mb-2 pb-1"
-               style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${filmstripTileWidth}px, ${filmstripTileWidth}px))`, justifyContent: 'center' }}>
+          {/* Filmstrip — preview cards only in stage mode to avoid duplicate live players */}
+          <div
+            className={`mb-2 pb-1 ${isMobileLayout ? '-mx-2.5 flex snap-x snap-mandatory gap-2 overflow-x-auto px-2.5 pb-2' : 'grid gap-2 sm:gap-3 overflow-x-auto'}`}
+            style={isMobileLayout ? undefined : { gridTemplateColumns: `repeat(auto-fill, minmax(${effectiveFilmstripTileWidth}px, ${effectiveFilmstripTileWidth}px))`, justifyContent: 'center' }}
+          >
             {visibleStreams.map((stream) => {
               const isActive = stream.id === mainStreamId;
 
               return (
-                <div key={`film-wrap-${stream.id}`} className="flex flex-col gap-1">
-                  <button
+                <div
+                  key={`film-wrap-${stream.id}`}
+                  className={`flex flex-col gap-1 ${isMobileLayout ? 'w-[210px] shrink-0 snap-start first:pl-0' : ''}`}
+                  style={isMobileLayout ? { width: `${effectiveFilmstripTileWidth}px` } : undefined}
+                >
+                  <StreamPreviewCard
+                    stream={stream}
+                    isActive={isActive}
                     onClick={() => handleSwapStream(stream.id)}
-                    className={`w-full rounded-lg border-2 transition-all overflow-hidden relative group ${
-                      isActive
-                        ? 'border-pov-accent shadow-lg shadow-pov-accent/20'
-                        : 'border-pov-border hover:border-pov-muted'
-                    }`}
-                  >
-                    <div className="aspect-video pointer-events-none">
-                      <StreamPlayer
-                        streamUrl={stream.youtube_url}
-                        platform={stream.platform}
-                        isMain={false}
-                        onReady={(player) => {
-                          playerRefs.current[`film-${stream.id}`] = player;
-                        }}
-                        className="w-full h-full"
-                      />
-                    </div>
-                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-2 py-1.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-mono text-white truncate">
-                          {stream.display_name}
-                        </span>
-                        <StatusIndicators
-                          stream={stream}
-                          isHost={stream.user_id === session?.host_id}
-                          isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId}
-                        />
-                      </div>
-                    </div>
-                    {isActive && (
-                      <div className="absolute top-0 left-0 right-0 h-0.5 bg-pov-accent" />
-                    )}
-                  </button>
+                    isHost={stream.user_id === session?.host_id}
+                    isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId}
+                    label={stream.is_anchor ? 'Anchor' : null}
+                    className={isMobileLayout ? 'min-h-full' : ''}
+                  />
 
-                  {hasControl && !isVod && (
+                  {hasControl && !isVod && (!isMobileLayout || isActive) && (
                     <OffsetControls
                       streamId={stream.id}
                       isAnchor={stream.is_anchor}
@@ -1529,6 +1953,66 @@ function LinkRow({ label, url }) {
   );
 }
 
+function CycleViewPicker({
+  streams,
+  activeStreamId,
+  infoStreamId,
+  visible,
+  onHoverStream,
+  onLeave,
+  onSelectStream,
+}) {
+  const infoStream = streams.find((stream) => stream.id === infoStreamId) ?? streams[0] ?? null;
+
+  return (
+    <div
+      className={`absolute inset-x-3 bottom-3 z-30 rounded-[1.35rem] border border-white/12 bg-black/35 p-3 shadow-[0_16px_40px_rgba(0,0,0,0.32)] backdrop-blur-xl transition-opacity duration-200 sm:inset-x-4 sm:bottom-4 sm:p-3.5 ${visible ? 'opacity-100' : 'opacity-0'}`}
+      onMouseEnter={() => infoStreamId && onHoverStream(infoStreamId)}
+      onMouseLeave={onLeave}
+    >
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-white/55">POV Picker</p>
+          <p className="truncate text-sm font-semibold text-white sm:text-[15px]">
+            {infoStream?.display_name || 'Select a POV'}
+          </p>
+        </div>
+        <span className="shrink-0 text-[10px] font-mono uppercase tracking-[0.16em] text-pov-success">
+          {Math.max(streams.findIndex((stream) => stream.id === activeStreamId), 0) + 1} / {streams.length}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {streams.map((stream, index) => {
+          const isActive = stream.id === activeStreamId;
+          return (
+            <button
+              key={stream.id}
+              type="button"
+              onMouseEnter={() => onHoverStream(stream.id)}
+              onFocus={() => onHoverStream(stream.id)}
+              onClick={() => onSelectStream(stream.id)}
+              className={`rounded-2xl border px-3 py-3 text-left transition-all ${
+                isActive
+                  ? 'border-pov-accent/80 bg-pov-accent/16 shadow-[inset_0_0_0_1px_rgba(108,92,231,0.25)]'
+                  : 'border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/8'
+              }`}
+            >
+              <span className="mb-1 block text-[10px] font-mono uppercase tracking-[0.16em] text-white/48">
+                POV {index + 1}
+              </span>
+              <span className="block truncate text-sm font-semibold text-white">{stream.display_name}</span>
+              <span className="mt-1 block truncate text-[11px] text-white/50">
+                {isActive ? 'Current selection' : 'Tap to switch'}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /**
  * Collapsible sync status panel — host only.
  * Shows per-stream: status, offset, start time availability.
@@ -1663,6 +2147,18 @@ function OffsetControls({ streamId, isAnchor, offset, onStep, onPromoteAnchor })
     return `${sign}${s.toFixed(2)}s`;
   };
 
+  const primaryButtons = [
+    { label: '-5s', delta: +OFFSET_STEPS.MEDIUM, title: 'Move back 5 seconds' },
+    { label: '-1s', delta: +OFFSET_STEPS.FINE, title: 'Move back 1 second' },
+    { label: '+1s', delta: -OFFSET_STEPS.FINE, title: 'Move forward 1 second' },
+    { label: '+5s', delta: -OFFSET_STEPS.MEDIUM, title: 'Move forward 5 seconds' },
+  ];
+
+  const frameButtons = [
+    { label: '-1f', delta: +OFFSET_STEPS.FRAME, title: 'Move back 1 frame' },
+    { label: '+1f', delta: -OFFSET_STEPS.FRAME, title: 'Move forward 1 frame' },
+  ];
+
   return (
     <div className="w-full">
       {/* Offset readout + promote button */}
@@ -1682,47 +2178,37 @@ function OffsetControls({ streamId, isAnchor, offset, onStep, onPromoteAnchor })
           )}
         </div>
       </div>
-      {/* Step buttons — show fewer on mobile for larger touch targets */}
-      <div className="hidden sm:flex gap-0.5">
-        {[
-          { label: '◀◀', delta: -OFFSET_STEPS.COARSE, title: '−30s' },
-          { label: '◀',  delta: -OFFSET_STEPS.MEDIUM,  title: '−5s' },
-          { label: '‹',  delta: -OFFSET_STEPS.FINE,    title: '−1s' },
-          { label: '⟨',  delta: -OFFSET_STEPS.FRAME,   title: '−1 frame' },
-          { label: '⟩',  delta: +OFFSET_STEPS.FRAME,   title: '+1 frame' },
-          { label: '›',  delta: +OFFSET_STEPS.FINE,    title: '+1s' },
-          { label: '▶',  delta: +OFFSET_STEPS.MEDIUM,  title: '+5s' },
-          { label: '▶▶', delta: +OFFSET_STEPS.COARSE,  title: '+30s' },
-        ].map(({ label, delta, title }) => (
+      <div className="flex gap-1">
+        {primaryButtons.map(({ label, delta, title }) => (
           <button
             key={label}
             title={title}
             disabled={isAnchor}
             onClick={() => onStep(streamId, delta)}
-            className="flex-1 text-[9px] font-mono bg-pov-bg border border-pov-border rounded py-0.5 text-pov-muted hover:text-pov-text hover:border-pov-muted disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+            className="flex-1 text-[10px] font-mono bg-pov-bg border border-pov-border rounded py-1 px-1.5 text-pov-muted hover:text-pov-text hover:border-pov-muted disabled:opacity-20 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
           >
             {label}
           </button>
         ))}
       </div>
-      {/* Mobile: simplified 4-button layout */}
-      <div className="flex sm:hidden gap-0.5">
-        {[
-          { label: '−5s',   delta: -OFFSET_STEPS.MEDIUM,  title: '−5s' },
-          { label: '−1s',   delta: -OFFSET_STEPS.FINE,     title: '−1s' },
-          { label: '+1s',   delta: +OFFSET_STEPS.FINE,     title: '+1s' },
-          { label: '+5s',   delta: +OFFSET_STEPS.MEDIUM,   title: '+5s' },
-        ].map(({ label, delta, title }) => (
+
+      <div className="mt-1 flex items-center justify-between gap-1">
+        <span className="text-[8px] font-mono uppercase tracking-wide text-pov-muted/60">
+          Frame nudge
+        </span>
+        <div className="flex gap-1">
+        {frameButtons.map(({ label, delta, title }) => (
           <button
             key={label}
             title={title}
             disabled={isAnchor}
             onClick={() => onStep(streamId, delta)}
-            className="flex-1 text-[10px] font-mono bg-pov-bg border border-pov-border rounded py-1 text-pov-muted hover:text-pov-text active:bg-pov-accent/10 disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+            className="min-w-[42px] text-[9px] font-mono bg-pov-bg border border-pov-border rounded py-0.5 px-1.5 text-pov-muted hover:text-pov-text active:bg-pov-accent/10 disabled:opacity-20 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
           >
             {label}
           </button>
         ))}
+        </div>
       </div>
     </div>
   );

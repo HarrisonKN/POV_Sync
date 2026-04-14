@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { motion } from 'motion/react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import StreamPlayer from '../components/StreamPlayer';
+import StreamPreviewCard from '../components/StreamPreviewCard';
 import StatusIndicators from '../components/StatusIndicators';
 import ErrorState from '../components/ErrorState';
 import SessionRoomHeader from '../components/SessionRoomHeader';
@@ -30,6 +32,8 @@ export default function Spectator() {
   const isPlayingRef = useRef(true);
   const syncingRef = useRef(false);
   const wsRef = useRef(null);
+  const lastSeekTs = useRef(0);
+  const SEEK_COOLDOWN_MS = 4000;
 
   // Fetch session on mount
   useEffect(() => {
@@ -188,9 +192,164 @@ export default function Spectator() {
 
   const readyCountRef = useRef(0);
 
+  const syncMirroredPair = useCallback((streamId, preferredPlayerId = streamId, threshold = 0.35) => {
+    const stagePlayer = playerRefs.current[streamId];
+    const filmPlayer = playerRefs.current[`film-${streamId}`];
+
+    if (!stagePlayer || !filmPlayer || stagePlayer === filmPlayer) return;
+
+    const useFilmAsSource = preferredPlayerId === `film-${streamId}`;
+    const sourcePlayer = useFilmAsSource ? filmPlayer : stagePlayer;
+    const targetPlayer = useFilmAsSource ? stagePlayer : filmPlayer;
+
+    try {
+      const sourceTime = sourcePlayer.getCurrentTime?.();
+      const targetTime = targetPlayer.getCurrentTime?.();
+
+      if (Number.isFinite(sourceTime) && Number.isFinite(targetTime) && Math.abs(sourceTime - targetTime) > threshold) {
+        lastSeekTs.current = Date.now();
+        targetPlayer.seekTo?.(sourceTime, true);
+      }
+
+      const YT = window.YT;
+      const sourceState = sourcePlayer.getPlayerState?.();
+      if (!YT || typeof sourceState !== 'number') return;
+
+      if (sourceState === YT.PlayerState.PLAYING) {
+        targetPlayer.playVideo?.();
+      } else if (sourceState === YT.PlayerState.PAUSED) {
+        targetPlayer.pauseVideo?.();
+      }
+    } catch (_) {}
+  }, []);
+
+  const handleGoLiveLocal = useCallback(() => {
+    syncingRef.current = true;
+    lastSeekTs.current = Date.now();
+
+    streamsRef.current.forEach((stream) => {
+      const stagePlayer = playerRefs.current[stream.id];
+      const filmPlayer = playerRefs.current[`film-${stream.id}`];
+      const offset = offsetsRef.current[stream.id] ?? 0;
+
+      try {
+        const duration = stagePlayer?.getDuration?.() ?? filmPlayer?.getDuration?.() ?? 0;
+        const liveEdge = duration > 0 ? duration : 9999999;
+        const target = Math.max(0, liveEdge - offset);
+        stagePlayer?.seekTo?.(target, true);
+        filmPlayer?.seekTo?.(target, true);
+      } catch (_) {}
+    });
+
+    syncingRef.current = false;
+  }, []);
+
+  const handleResyncLocal = useCallback(() => {
+    const anchor = streamsRef.current.find((stream) => stream.is_anchor);
+    const anchorPlayer = anchor ? playerRefs.current[anchor.id] : null;
+    const anchorTime = anchorPlayer?.getCurrentTime?.() ?? 0;
+
+    if (!anchor || !Number.isFinite(anchorTime) || anchorTime <= 0) {
+      handleGoLiveLocal();
+      return;
+    }
+
+    syncingRef.current = true;
+    lastSeekTs.current = Date.now();
+
+    streamsRef.current.forEach((stream) => {
+      const offset = offsetsRef.current[stream.id] ?? 0;
+      const target = Math.max(0, anchorTime - offset);
+      try { playerRefs.current[stream.id]?.seekTo?.(target, true); } catch (_) {}
+      try { playerRefs.current[`film-${stream.id}`]?.seekTo?.(target, true); } catch (_) {}
+    });
+
+    syncingRef.current = false;
+  }, [handleGoLiveLocal]);
+
+  useEffect(() => {
+    if (!mainStreamId) return;
+    const timeoutId = window.setTimeout(() => {
+      syncMirroredPair(mainStreamId, `film-${mainStreamId}`);
+    }, 120);
+    return () => window.clearTimeout(timeoutId);
+  }, [mainStreamId, syncMirroredPair]);
+
+  useEffect(() => {
+    const DRIFT_SEEK_THRESHOLD = 3;
+    const FILM_DRIFT_THRESHOLD = 1.5;
+    const PAIR_DRIFT_THRESHOLD = 0.35;
+
+    const intervalId = setInterval(() => {
+      if (syncingRef.current) return;
+      if (Date.now() - lastSeekTs.current < SEEK_COOLDOWN_MS) return;
+
+      streamsRef.current.forEach((stream) => {
+        const preferredPlayerId = stream.id === mainStreamId ? stream.id : `film-${stream.id}`;
+        syncMirroredPair(stream.id, preferredPlayerId, PAIR_DRIFT_THRESHOLD);
+      });
+
+      if (sessionRef.current?.status === 'ended') return;
+
+      const anchor = streamsRef.current.find((stream) => stream.is_anchor);
+      const anchorPlayer = anchor ? playerRefs.current[anchor.id] : null;
+      if (!anchor || !anchorPlayer || typeof anchorPlayer.getCurrentTime !== 'function') return;
+
+      let anchorTime;
+      try { anchorTime = anchorPlayer.getCurrentTime(); } catch (_) { return; }
+      if (!Number.isFinite(anchorTime) || anchorTime <= 0) return;
+
+      let didSeek = false;
+
+      try {
+        const anchorFilm = playerRefs.current[`film-${anchor.id}`];
+        if (anchorFilm) {
+          const filmTime = anchorFilm.getCurrentTime?.() ?? 0;
+          if (Math.abs(filmTime - anchorTime) > FILM_DRIFT_THRESHOLD) {
+            anchorFilm.seekTo?.(anchorTime, true);
+            didSeek = true;
+          }
+        }
+      } catch (_) {}
+
+      streamsRef.current.forEach((stream) => {
+        if (stream.id === anchor.id) return;
+        const offset = offsetsRef.current[stream.id] ?? 0;
+        const expected = Math.max(0, anchorTime - offset);
+
+        try {
+          const stagePlayer = playerRefs.current[stream.id];
+          if (stagePlayer) {
+            const stageTime = stagePlayer.getCurrentTime?.() ?? 0;
+            if (Math.abs(stageTime - expected) > DRIFT_SEEK_THRESHOLD) {
+              stagePlayer.seekTo?.(expected, true);
+              didSeek = true;
+            }
+          }
+        } catch (_) {}
+
+        try {
+          const filmPlayer = playerRefs.current[`film-${stream.id}`];
+          if (filmPlayer) {
+            const filmTime = filmPlayer.getCurrentTime?.() ?? 0;
+            if (Math.abs(filmTime - expected) > FILM_DRIFT_THRESHOLD) {
+              filmPlayer.seekTo?.(expected, true);
+              didSeek = true;
+            }
+          }
+        } catch (_) {}
+      });
+
+      if (didSeek) lastSeekTs.current = Date.now();
+    }, 2500);
+
+    return () => clearInterval(intervalId);
+  }, [mainStreamId, syncMirroredPair]);
+
   // Store player ref when ready; for VODs, seek to aligned start once all ready
   const handlePlayerReady = useCallback((streamId, player) => {
     playerRefs.current[streamId] = player;
+    syncMirroredPair(streamId, streamId);
 
     const isFilm = typeof streamId === 'string' && streamId.startsWith('film-');
     if (isFilm) return;
@@ -208,7 +367,7 @@ export default function Spectator() {
       try { playerRefs.current[stream.id]?.seekTo(target, true); } catch (_) {}
       try { playerRefs.current[`film-${stream.id}`]?.seekTo(target, true); } catch (_) {}
     });
-  }, []);
+  }, [syncMirroredPair]);
 
   // Anchor plays/pauses → sync everyone.
   // Non-anchor plays/pauses → sync only its own filmstrip mirror.
@@ -241,8 +400,9 @@ export default function Spectator() {
 
   const handleSwapStream = useCallback((newStreamId) => {
     if (newStreamId === mainStreamId) return;
+    syncMirroredPair(newStreamId, `film-${newStreamId}`);
     setMainStreamId(newStreamId);
-  }, [mainStreamId]);
+  }, [mainStreamId, syncMirroredPair]);
 
   // ── Early returns (all hooks are declared above) ────────────────────────────
 
@@ -266,7 +426,12 @@ export default function Spectator() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4">
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.28, ease: 'easeOut' }}
+      className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4"
+    >
       <SessionRoomHeader
         title="Spectator room"
         session={session}
@@ -280,7 +445,7 @@ export default function Spectator() {
       />
 
       {/* Spectator header */}
-      <div className="flex items-center gap-2 mb-3 sm:mb-4">
+      <div className="flex items-center gap-2 mb-3 sm:mb-4 flex-wrap">
         <span className="text-[10px] sm:text-xs font-mono bg-pov-surface border border-pov-border rounded px-2 py-1 text-pov-muted">
           👁 Spectator
         </span>
@@ -296,6 +461,24 @@ export default function Spectator() {
         <span className="text-xs text-pov-muted font-mono">
           {visibleStreams.length} stream{visibleStreams.length !== 1 ? 's' : ''}
         </span>
+        {session?.status === 'live' && (
+          <>
+            <button
+              type="button"
+              onClick={handleGoLiveLocal}
+              className="text-[10px] sm:text-xs font-mono bg-pov-surface border border-pov-border rounded px-2 py-1 text-pov-muted hover:text-pov-accent hover:border-pov-accent transition-colors"
+            >
+              Go live
+            </button>
+            <button
+              type="button"
+              onClick={handleResyncLocal}
+              className="text-[10px] sm:text-xs font-mono bg-pov-surface border border-pov-border rounded px-2 py-1 text-pov-muted hover:text-pov-accent hover:border-pov-accent transition-colors"
+            >
+              Re-sync
+            </button>
+          </>
+        )}
         <button
           type="button"
           onClick={() => setViewMode((mode) => (mode === 'stage' ? 'wall' : 'stage'))}
@@ -326,10 +509,13 @@ export default function Spectator() {
             visibleStreams.map((stream) => {
               const isActive = stream.id === mainStreamId;
               return (
-                <button
+                <motion.button
+                  layout
+                  whileHover={{ y: -2, scale: 1.005 }}
+                  whileTap={{ scale: 0.99 }}
                   key={`wall-${stream.id}`}
                   onClick={() => handleSwapStream(stream.id)}
-                  className={`relative aspect-video bg-black rounded-lg overflow-hidden border-2 transition-all ${
+                  className={`relative aspect-video bg-black rounded-2xl overflow-hidden border-2 transition-all ${
                     isActive ? 'border-pov-accent shadow-lg shadow-pov-accent/20' : 'border-pov-border hover:border-pov-muted'
                   }`}
                 >
@@ -339,7 +525,6 @@ export default function Spectator() {
                     isMain={stream.id === mainStreamId}
                     onReady={(player) => {
                       handlePlayerReady(stream.id, player);
-                      playerRefs.current[`film-${stream.id}`] = player;
                     }}
                     onStateChange={(state) => handleStageStateChange(stream.id, state)}
                     className="w-full h-full"
@@ -354,7 +539,7 @@ export default function Spectator() {
                     </div>
                   </div>
                   {isActive && <div className="absolute top-0 left-0 right-0 h-0.5 bg-pov-accent" />}
-                </button>
+                </motion.button>
               );
             })
           ) : (
@@ -366,11 +551,15 @@ export default function Spectator() {
       ) : (
         <>
           {/* Main Stage — all players stacked, only selected visible */}
-          <div className="aspect-video bg-black border border-pov-border rounded-lg mb-2 sm:mb-3 overflow-hidden relative">
+          <motion.div layout className="glass-card aspect-video border border-white/10 rounded-2xl mb-2 sm:mb-3 overflow-hidden relative">
             {visibleStreams.length > 0 ? (
               visibleStreams.map((stream) => (
-                <div
+                <motion.div
+                  layout
                   key={`stage-${stream.id}`}
+                  initial={false}
+                  animate={{ opacity: stream.id === mainStreamId ? 1 : 0, scale: stream.id === mainStreamId ? 1 : 0.985 }}
+                  transition={{ duration: 0.22, ease: 'easeOut' }}
                   className={`absolute inset-0 transition-opacity duration-200 ${
                     stream.id === mainStreamId ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'
                   }`}
@@ -394,7 +583,7 @@ export default function Spectator() {
                       </div>
                     </div>
                   )}
-                </div>
+                </motion.div>
               ))
             ) : (
               <div className="w-full h-full flex items-center justify-center">
@@ -412,49 +601,23 @@ export default function Spectator() {
                 </div>
               </div>
             )}
-          </div>
+          </motion.div>
 
-          {/* Filmstrip — live mini-players, click to swap */}
+          {/* Filmstrip — preview cards only in stage mode to avoid duplicate live players */}
           <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-2 sm:overflow-x-auto pb-2">
             {visibleStreams.length > 0 ? (
               visibleStreams.map((stream) => {
                 const isActive = stream.id === mainStreamId;
                 return (
-                  <button
+                  <StreamPreviewCard
                     key={`film-${stream.id}`}
+                    stream={stream}
+                    isActive={isActive}
                     onClick={() => handleSwapStream(stream.id)}
-                    className={`w-full sm:flex-shrink-0 sm:w-48 rounded-lg border-2 transition-all overflow-hidden relative group ${
-                      isActive
-                        ? 'border-pov-accent shadow-lg shadow-pov-accent/20'
-                        : 'border-pov-border hover:border-pov-muted'
-                    }`}
-                  >
-                    <div className="aspect-video pointer-events-none">
-                      <StreamPlayer
-                        streamUrl={stream.youtube_url}
-                        platform={stream.platform}
-                        isMain={false}
-                        onReady={(player) => {
-                          playerRefs.current[`film-${stream.id}`] = player;
-                        }}
-                        className="w-full h-full"
-                      />
-                    </div>
-                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-2 py-1.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-mono text-white truncate">
-                          {stream.display_name}
-                        </span>
-                        <StatusIndicators
-                          stream={stream}
-                          isHost={stream.user_id === session?.host_id}
-                        />
-                      </div>
-                    </div>
-                    {isActive && (
-                      <div className="absolute top-0 left-0 right-0 h-0.5 bg-pov-accent" />
-                    )}
-                  </button>
+                    isHost={stream.user_id === session?.host_id}
+                    label={stream.is_anchor ? 'Anchor' : null}
+                    className="w-full sm:flex-shrink-0 sm:w-48"
+                  />
                 );
               })
             ) : (
@@ -470,6 +633,6 @@ export default function Spectator() {
           </div>
         </>
       )}
-    </div>
+    </motion.div>
   );
 }

@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>POV Sync Stream Cycler Prototype</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --text: #f5f7ff;
+      --muted: #b2b7cf;
+      --accent: #7c72ff;
+      --accent-soft: rgba(124, 114, 255, 0.24);
+      --success: #22dfb1;
+      --surface: rgba(18, 20, 30, 0.72);
+      --surface-strong: rgba(10, 12, 18, 0.88);
+      --border: rgba(255, 255, 255, 0.12);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: #090b10;
+      color: var(--text);
+      font-family: Inter, system-ui, sans-serif;
+      overflow: hidden;
+    }
+
+    body {
+      padding:
+        env(safe-area-inset-top)
+        env(safe-area-inset-right)
+        env(safe-area-inset-bottom)
+        env(safe-area-inset-left);
+    }
+
+    .app {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
+      background: #06070b;
+      cursor: default;
+    }
+
+    .viewer {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+    }
+
+    .stream {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      transform: scale(1.01);
+      transition: opacity 220ms ease, transform 220ms ease;
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
+    }
+
+    .stream::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at top, rgba(255,255,255,0.14), transparent 30%),
+        linear-gradient(180deg, rgba(0,0,0,0.18), rgba(0,0,0,0.58));
+    }
+
+    .stream.active {
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    .stream-copy {
+      position: absolute;
+      left: clamp(16px, 4vw, 42px);
+      bottom: clamp(118px, 18vh, 168px);
+      z-index: 1;
+      width: min(640px, calc(100% - 32px));
+      pointer-events: none;
+    }
+
+    .stream-copy h1 {
+      margin: 0;
+      font-size: clamp(34px, 5vw, 72px);
+      line-height: 0.96;
+      letter-spacing: -0.05em;
+    }
+
+    .stream-copy p {
+      margin: 12px 0 0;
+      max-width: 34rem;
+      font-size: clamp(14px, 1.8vw, 19px);
+      color: rgba(255,255,255,0.8);
+    }
+
+    .stream-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(7,9,15,0.36);
+      backdrop-filter: blur(18px);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .chrome {
+      transition: opacity 220ms ease, transform 220ms ease;
+    }
+
+    .app.idle .chrome {
+      opacity: 0.08;
+    }
+
+    .chrome:hover,
+    .chrome:focus-within,
+    .app:not(.idle) .chrome {
+      opacity: 1;
+    }
+
+    .edge-button {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 3;
+      width: 68px;
+      height: 68px;
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 999px;
+      background: rgba(5, 7, 12, 0.28);
+      color: white;
+      display: grid;
+      place-items: center;
+      font-size: 28px;
+      cursor: pointer;
+      backdrop-filter: blur(18px);
+      box-shadow: 0 14px 36px rgba(0,0,0,0.32);
+    }
+
+    .edge-button.left { left: 18px; }
+    .edge-button.right { right: 18px; }
+
+    .top-pill {
+      position: absolute;
+      top: max(16px, env(safe-area-inset-top));
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 3;
+      padding: 10px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(7, 9, 15, 0.24);
+      backdrop-filter: blur(18px);
+      color: rgba(255,255,255,0.74);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .picker {
+      position: absolute;
+      left: 50%;
+      bottom: max(14px, env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      z-index: 4;
+      width: min(calc(100% - 20px), 760px);
+      padding: 12px;
+      border-radius: 24px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      backdrop-filter: blur(24px);
+      box-shadow: 0 18px 50px rgba(0,0,0,0.34);
+    }
+
+    .picker-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .picker-title {
+      min-width: 0;
+    }
+
+    .picker-title small {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .picker-title strong {
+      display: block;
+      font-size: 15px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .picker-status {
+      flex-shrink: 0;
+      color: var(--success);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .picker-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .pov-box {
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.05);
+      padding: 12px 12px 10px;
+      cursor: pointer;
+      text-align: left;
+      color: white;
+      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+    }
+
+    .pov-box:hover,
+    .pov-box:focus-visible {
+      transform: translateY(-1px);
+      border-color: rgba(255,255,255,0.22);
+      background: rgba(255,255,255,0.08);
+      outline: none;
+    }
+
+    .pov-box.active {
+      border-color: rgba(124, 114, 255, 0.9);
+      background: linear-gradient(180deg, rgba(124,114,255,0.22), rgba(255,255,255,0.06));
+      box-shadow: inset 0 0 0 1px var(--accent-soft), 0 0 0 1px rgba(124,114,255,0.2);
+    }
+
+    .pov-box .index {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    .pov-box .name {
+      display: block;
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .pov-box .sub {
+      display: block;
+      margin-top: 5px;
+      color: rgba(255,255,255,0.64);
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    @media (max-width: 720px) {
+      .edge-button {
+        top: auto;
+        bottom: 112px;
+        transform: none;
+        width: 58px;
+        height: 58px;
+        font-size: 24px;
+      }
+
+      .edge-button.left { left: 12px; }
+      .edge-button.right { right: 12px; }
+
+      .top-pill {
+        top: calc(10px + env(safe-area-inset-top));
+        font-size: 11px;
+      }
+
+      .stream-copy {
+        left: 16px;
+        right: 16px;
+        width: auto;
+        bottom: 172px;
+      }
+
+      .picker {
+        width: calc(100% - 12px);
+        padding: 10px;
+        border-radius: 20px;
+      }
+
+      .picker-head {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .picker-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app" id="appRoot">
+    <div class="viewer" id="viewerArea">
+      <section class="stream active" data-name="Harrison POV" data-sub="Main stage · Host" style="background-image: linear-gradient(135deg, rgba(124,114,255,0.38), rgba(10,12,18,0.82)), url('https://images.unsplash.com/photo-1511512578047-dfb367046420?auto=format&fit=crop&w=1400&q=80');">
+        <div class="stream-copy">
+          <span class="stream-badge">Current POV</span>
+          <h1>Harrison POV</h1>
+          <p>This mockup treats the video area like true fullscreen. The navigation stays clickable inside the viewer, but fades visually after a short pause.</p>
+        </div>
+      </section>
+      <section class="stream" data-name="POV 2 - Mid Lane" data-sub="Synced · Live" style="background-image: linear-gradient(135deg, rgba(36,225,179,0.28), rgba(8,15,24,0.84)), url('https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1400&q=80');">
+        <div class="stream-copy">
+          <span class="stream-badge">Current POV</span>
+          <h1>POV 2 - Mid Lane</h1>
+          <p>Clicking the left or right controls cycles through every stream in a loop, just like browsing a focused POV playlist.</p>
+        </div>
+      </section>
+      <section class="stream" data-name="POV 3 - Jungle" data-sub="Offset +0.4s" style="background-image: linear-gradient(135deg, rgba(255,184,76,0.26), rgba(16,11,8,0.86)), url('https://images.unsplash.com/photo-1493711662062-fa541adb3fc8?auto=format&fit=crop&w=1400&q=80');">
+        <div class="stream-copy">
+          <span class="stream-badge">Current POV</span>
+          <h1>POV 3 - Jungle</h1>
+          <p>The picker below shows each POV as a separate box, highlights the selected one, and updates the title when you hover a different stream.</p>
+        </div>
+      </section>
+      <section class="stream" data-name="POV 4 - Support" data-sub="Support · Anchor ready" style="background-image: linear-gradient(135deg, rgba(255,107,107,0.24), rgba(18,10,14,0.88)), url('https://images.unsplash.com/photo-1511882150382-421056c89033?auto=format&fit=crop&w=1400&q=80');">
+        <div class="stream-copy">
+          <span class="stream-badge">Current POV</span>
+          <h1>POV 4 - Support</h1>
+          <p>On mobile this could feel like a clean full-screen watcher with swipe support and just enough chrome to stay understandable.</p>
+        </div>
+      </section>
+    </div>
+
+    <div class="top-pill chrome">Fullscreen POV cycle · swipe or tap arrows</div>
+
+    <button class="edge-button left chrome" id="prevButton" aria-label="Previous POV">←</button>
+    <button class="edge-button right chrome" id="nextButton" aria-label="Next POV">→</button>
+
+    <div class="picker chrome" id="pickerPanel">
+      <div class="picker-head">
+        <div class="picker-title">
+          <small>POV Picker</small>
+          <strong id="hoverLabel">Harrison POV</strong>
+        </div>
+        <div class="picker-status" id="pickerStatus">1 / 4 active</div>
+      </div>
+      <div class="picker-grid" id="pickerGrid"></div>
+    </div>
+  </div>
+
+  <script>
+    const appRoot = document.getElementById('appRoot');
+    const viewerArea = document.getElementById('viewerArea');
+    const prevButton = document.getElementById('prevButton');
+    const nextButton = document.getElementById('nextButton');
+    const pickerGrid = document.getElementById('pickerGrid');
+    const hoverLabel = document.getElementById('hoverLabel');
+    const pickerStatus = document.getElementById('pickerStatus');
+    const streams = Array.from(document.querySelectorAll('.stream'));
+
+    let activeIndex = 0;
+    let hoverIndex = 0;
+    let startX = null;
+    let idleTimer;
+
+    function bumpChromeVisibility() {
+      appRoot.classList.remove('idle');
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        appRoot.classList.add('idle');
+      }, 2200);
+    }
+
+    function updatePickerLabel() {
+      const hoveredStream = streams[hoverIndex] || streams[activeIndex];
+      hoverLabel.textContent = hoveredStream?.dataset.name || '';
+      pickerStatus.textContent = `${activeIndex + 1} / ${streams.length} active`;
+    }
+
+    function renderPicker() {
+      pickerGrid.innerHTML = '';
+      streams.forEach((stream, index) => {
+        const box = document.createElement('button');
+        box.type = 'button';
+        box.className = `pov-box${index === activeIndex ? ' active' : ''}`;
+        box.innerHTML = `
+          <span class="index">POV ${index + 1}</span>
+          <span class="name">${stream.dataset.name}</span>
+          <span class="sub">${stream.dataset.sub}</span>
+        `;
+
+        const focusBox = () => {
+          hoverIndex = index;
+          updatePickerLabel();
+          bumpChromeVisibility();
+        };
+
+        box.addEventListener('mouseenter', focusBox);
+        box.addEventListener('focus', focusBox);
+        box.addEventListener('click', () => setActive(index));
+        pickerGrid.appendChild(box);
+      });
+    }
+
+    function setActive(index) {
+      activeIndex = (index + streams.length) % streams.length;
+      hoverIndex = activeIndex;
+      streams.forEach((stream, streamIndex) => {
+        stream.classList.toggle('active', streamIndex === activeIndex);
+      });
+      renderPicker();
+      updatePickerLabel();
+      bumpChromeVisibility();
+    }
+
+    prevButton.addEventListener('click', () => setActive(activeIndex - 1));
+    nextButton.addEventListener('click', () => setActive(activeIndex + 1));
+
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowLeft') setActive(activeIndex - 1);
+      if (event.key === 'ArrowRight') setActive(activeIndex + 1);
+    });
+
+    window.addEventListener('touchstart', (event) => {
+      startX = event.changedTouches[0]?.clientX ?? null;
+      bumpChromeVisibility();
+    }, { passive: true });
+
+    window.addEventListener('touchend', (event) => {
+      if (startX === null) return;
+      const endX = event.changedTouches[0]?.clientX ?? startX;
+      const delta = endX - startX;
+      if (Math.abs(delta) > 48) {
+        setActive(delta < 0 ? activeIndex + 1 : activeIndex - 1);
+      }
+      startX = null;
+    }, { passive: true });
+
+    ['mousemove', 'pointerdown', 'pointermove', 'click'].forEach((eventName) => {
+      viewerArea.addEventListener(eventName, bumpChromeVisibility, { passive: true });
+    });
+
+    pickerGrid.addEventListener('mouseleave', () => {
+      hoverIndex = activeIndex;
+      updatePickerLabel();
+    });
+
+    renderPicker();
+    updatePickerLabel();
+    bumpChromeVisibility();
+  </script>
+</body>
+</html>
