@@ -11,6 +11,17 @@ CREATE TABLE IF NOT EXISTS public.users (
   created_at  timestamptz DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS public.follows (
+  follower_id uuid NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  following_id uuid NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  created_at timestamptz DEFAULT now(),
+  PRIMARY KEY (follower_id, following_id),
+  CONSTRAINT follows_no_self_follow CHECK (follower_id <> following_id)
+);
+
+CREATE INDEX IF NOT EXISTS follows_following_id_idx ON public.follows (following_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS follows_follower_id_idx ON public.follows (follower_id, created_at DESC);
+
 -- 2. Sessions table
 CREATE TABLE IF NOT EXISTS public.sessions (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -66,6 +77,7 @@ ALTER TABLE public.sessions
 
 -- Enable RLS on all tables
 ALTER TABLE public.users    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.follows  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.streams  ENABLE ROW LEVEL SECURITY;
 
@@ -77,6 +89,18 @@ CREATE POLICY "Users are viewable by everyone"
 CREATE POLICY "Users can update own record"
   ON public.users FOR UPDATE
   USING (auth.uid() = id);
+
+CREATE POLICY "Follows are viewable by everyone"
+  ON public.follows FOR SELECT
+  USING (true);
+
+CREATE POLICY "Users can follow from own account"
+  ON public.follows FOR INSERT
+  WITH CHECK (auth.uid() = follower_id AND follower_id <> following_id);
+
+CREATE POLICY "Users can unfollow from own account"
+  ON public.follows FOR DELETE
+  USING (auth.uid() = follower_id);
 
 -- Sessions: anyone can read (spectator links are public), authenticated users can insert
 CREATE POLICY "Sessions are viewable by everyone"

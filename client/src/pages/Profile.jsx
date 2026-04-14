@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useActiveSession } from '../hooks/useActiveSession';
 import { supabase } from '../lib/supabase';
 import SessionResumeCard from '../components/SessionResumeCard';
+import FollowButton from '../components/FollowButton';
+import { fetchFollowLists, fetchProfileSessions, followUser, unfollowUser } from '../lib/social';
 
 const MAX_AVATAR_PIPS = 4;
 const TABS = ['All', 'Hosted', 'Joined', 'VODs'];
@@ -18,9 +20,23 @@ export default function Profile() {
   const [participatedSessions, setParticipatedSessions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('All');
+  const [network, setNetwork] = useState({
+    followers: [],
+    following: [],
+    followerCount: 0,
+    followingCount: 0,
+    viewerFollowsTarget: false,
+  });
+  const [followBusy, setFollowBusy] = useState(false);
 
   const isOwnProfile = !userId || userId === user?.id;
   const targetUserId = userId || user?.id;
+
+  const loadNetwork = useCallback(async () => {
+    if (!targetUserId) return;
+    const summary = await fetchFollowLists(targetUserId, user?.id);
+    setNetwork(summary);
+  }, [targetUserId, user?.id]);
 
   useEffect(() => {
     async function fetchProfile() {
@@ -30,40 +46,25 @@ export default function Profile() {
         setHostedSessions([]);
         setParticipatedSessions([]);
 
-        if (isOwnProfile && ownProfile) {
-          setProfile(ownProfile);
-        } else {
-          const { data } = await supabase
-            .from('users')
-            .select('*')
-            .eq('id', targetUserId)
-            .single();
-          setProfile(data);
-        }
+        const profilePromise = isOwnProfile && ownProfile
+          ? Promise.resolve(ownProfile)
+          : supabase
+              .from('users')
+              .select('*')
+              .eq('id', targetUserId)
+              .single()
+              .then(({ data }) => data);
 
-        const { data: hosted } = await supabase
-          .from('sessions')
-          .select('*, streams!streams_session_id_fkey(id, display_name, user_id, is_active, left_at, users(avatar_url, display_name))')
-          .eq('host_id', targetUserId)
-          .order('created_at', { ascending: false });
-        setHostedSessions(hosted || []);
+        const [profileData, sessionData, followSummary] = await Promise.all([
+          profilePromise,
+          fetchProfileSessions(targetUserId),
+          fetchFollowLists(targetUserId, user?.id),
+        ]);
 
-        const { data: streamRows } = await supabase
-          .from('streams')
-          .select('session_id')
-          .eq('user_id', targetUserId);
-
-        if (streamRows?.length > 0) {
-          const sessionIds = [...new Set(streamRows.map((s) => s.session_id))];
-          const { data: participated } = await supabase
-            .from('sessions')
-            .select('*, streams!streams_session_id_fkey(id, display_name, user_id, is_active, left_at, users(avatar_url, display_name))')
-            .in('id', sessionIds)
-            .order('created_at', { ascending: false });
-          setParticipatedSessions(participated || []);
-        } else {
-          setParticipatedSessions([]);
-        }
+        setProfile(profileData);
+        setHostedSessions(sessionData.hostedSessions);
+        setParticipatedSessions(sessionData.participatedSessions);
+        setNetwork(followSummary);
       } catch (err) {
         console.error('Error fetching profile:', err);
       } finally {
@@ -71,7 +72,26 @@ export default function Profile() {
       }
     }
     fetchProfile();
-  }, [targetUserId, isOwnProfile, ownProfile]);
+  }, [targetUserId, isOwnProfile, ownProfile, user?.id]);
+
+  const handleFollowToggle = useCallback(async () => {
+    if (!user?.id || !targetUserId || isOwnProfile) return;
+
+    setFollowBusy(true);
+    try {
+      if (network.viewerFollowsTarget) {
+        await unfollowUser(user.id, targetUserId);
+      } else {
+        await followUser(user.id, targetUserId);
+      }
+
+      await loadNetwork();
+    } catch (err) {
+      console.error('Error updating follow state:', err);
+    } finally {
+      setFollowBusy(false);
+    }
+  }, [isOwnProfile, loadNetwork, network.viewerFollowsTarget, targetUserId, user?.id]);
 
   if (loading) {
     return (
@@ -134,15 +154,33 @@ export default function Profile() {
               {isOwnProfile && <span className="truncate">{profile.email}</span>}
               {memberSince && <span className="text-[10px] sm:text-xs hidden sm:inline">· Member since {memberSince}</span>}
             </div>
+            {!isOwnProfile && user && (
+              <div className="mt-3 sm:hidden">
+                <FollowButton
+                  busy={followBusy}
+                  isFollowing={network.viewerFollowsTarget}
+                  onClick={handleFollowToggle}
+                />
+              </div>
+            )}
           </div>
 
           {/* Stats inline on large screens */}
-          <div className="hidden sm:flex items-center gap-4">
+          <div className="hidden sm:flex flex-wrap items-center justify-end gap-3">
             <StatPill label="Sessions" value={allSessions.length} />
             <StatPill label="Hosted" value={hostedSessions.length} />
             <StatPill label="VODs" value={vodSessions.length} />
+            <StatPill label="Followers" value={network.followerCount} />
+            <StatPill label="Following" value={network.followingCount} />
             {liveSessions.length > 0 && (
               <StatPill label="Live" value={liveSessions.length} accent />
+            )}
+            {!isOwnProfile && user && (
+              <FollowButton
+                busy={followBusy}
+                isFollowing={network.viewerFollowsTarget}
+                onClick={handleFollowToggle}
+              />
             )}
           </div>
         </div>
@@ -160,11 +198,28 @@ export default function Profile() {
         )}
 
         {/* Stats row on mobile */}
-        <div className="grid grid-cols-3 gap-2 sm:gap-3 mt-4 sm:mt-5 sm:hidden">
+        <div className="grid grid-cols-2 gap-2 sm:gap-3 mt-4 sm:mt-5 sm:hidden">
           <StatCard label="Total Sessions" value={allSessions.length} />
           <StatCard label="Hosted" value={hostedSessions.length} />
           <StatCard label="VODs" value={vodSessions.length} accent={vodSessions.length > 0} />
+          <StatCard label="Followers" value={network.followerCount} />
+          <StatCard label="Following" value={network.followingCount} />
         </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 mb-6 animate-in">
+        <NetworkCard
+          title="Followers"
+          count={network.followerCount}
+          profiles={network.followers}
+          emptyText={isOwnProfile ? 'When people follow you, they show up here.' : 'No followers yet.'}
+        />
+        <NetworkCard
+          title="Following"
+          count={network.followingCount}
+          profiles={network.following}
+          emptyText={isOwnProfile ? 'Follow creators to build your rediscoverable feed.' : `${profile.display_name} is not following anyone yet.`}
+        />
       </div>
 
       {/* ── Live-now banner ───────────────────────────────── */}
@@ -300,6 +355,47 @@ function StatCard({ label, value, accent }) {
         {value}
       </p>
       <p className="text-[10px] text-pov-muted uppercase tracking-wider mt-0.5">{label}</p>
+    </div>
+  );
+}
+
+function NetworkCard({ title, count, profiles, emptyText }) {
+  return (
+    <div className="bg-pov-surface border border-pov-border rounded-xl p-4 sm:p-5">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div>
+          <p className="text-[10px] font-mono uppercase tracking-wider text-pov-muted">{title}</p>
+          <p className="text-sm text-pov-muted mt-1">{count} total</p>
+        </div>
+      </div>
+
+      {profiles.length > 0 ? (
+        <div className="space-y-2">
+          {profiles.slice(0, 6).map((entry) => (
+            <Link
+              key={entry.id}
+              to={`/profile/${entry.id}`}
+              className="flex items-center gap-3 rounded-lg border border-pov-border/60 bg-pov-bg/50 px-3 py-2.5 hover:border-pov-accent/20 transition-colors"
+            >
+              {entry.avatar_url ? (
+                <img src={entry.avatar_url} alt="" className="w-10 h-10 rounded-lg object-cover ring-1 ring-pov-border/60" />
+              ) : (
+                <div className="w-10 h-10 rounded-lg bg-pov-accent/15 flex items-center justify-center text-sm font-mono text-pov-accent">
+                  {(entry.display_name?.[0] ?? '?').toUpperCase()}
+                </div>
+              )}
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-pov-text">{entry.display_name}</p>
+                <p className="text-[11px] text-pov-muted">Open profile</p>
+              </div>
+            </Link>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-pov-border px-4 py-6 text-center text-sm text-pov-muted">
+          {emptyText}
+        </div>
+      )}
     </div>
   );
 }

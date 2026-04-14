@@ -4,10 +4,10 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../lib/supabase';
 import StreamPlayer from '../components/StreamPlayer';
-import StreamPreviewCard from '../components/StreamPreviewCard';
 import StatusIndicators from '../components/StatusIndicators';
 import ErrorState from '../components/ErrorState';
 import ConfirmModal from '../components/ConfirmModal';
+import PlaybackControls from '../components/PlaybackControls';
 import { OFFSET_STEPS } from '../../../shared/constants.js';
 
 const ROOM_TILE_MIN_WIDTH = 180;
@@ -522,6 +522,9 @@ export default function Viewer() {
   );
   const cycleHoverStream = visibleStreams.find((stream) => stream.id === cycleHoverStreamId) ?? null;
   const cycleInfoStream = cycleHoverStream ?? visibleStreams[cycleActiveIndex] ?? visibleStreams[0] ?? null;
+  const isWallView = viewMode === 'wall';
+  const isCycleView = viewMode === 'cycle';
+  const activeMainStream = visibleStreams.find((stream) => stream.id === mainStreamId) ?? null;
 
   useEffect(() => {
     if (!visibleStreams.some((stream) => stream.id === cycleHoverStreamId)) {
@@ -946,7 +949,7 @@ export default function Viewer() {
       const offset = offsetsRef.current[stream.id] ?? 0;
       try {
         // getDuration() returns the DVR buffer length for live streams (e.g. 10800s for a 3h window)
-        const duration = stagePlayer?.getDuration?.() ?? 0;
+        const duration = stagePlayer?.getDuration?.() ?? filmPlayer?.getDuration?.() ?? 0;
         // Use duration as the live edge; if not available fall back to a large number
         const liveEdge = duration > 0 ? duration : 9999999;
         const target   = Math.max(0, liveEdge - offset);
@@ -959,8 +962,90 @@ export default function Viewer() {
 
   // Re-sync — snap all streams to their correct positions relative to anchor
   const handleResync = useCallback(() => {
-    handleGoLive();
+    const anchor = streamsRef.current.find((stream) => stream.is_anchor);
+    const anchorPlayer = anchor ? playerRefs.current[anchor.id] : null;
+    const anchorTime = anchorPlayer?.getCurrentTime?.() ?? 0;
+
+    if (!anchor || !Number.isFinite(anchorTime) || anchorTime <= 0) {
+      handleGoLive();
+      return;
+    }
+
+    syncingRef.current = true;
+    lastSeekTs.current = Date.now();
+
+    streamsRef.current.forEach((stream) => {
+      const offset = offsetsRef.current[stream.id] ?? 0;
+      const target = Math.max(0, anchorTime - offset);
+      try { playerRefs.current[stream.id]?.seekTo?.(target, true); } catch (_) {}
+      try { playerRefs.current[`film-${stream.id}`]?.seekTo?.(target, true); } catch (_) {}
+    });
+
+    syncingRef.current = false;
   }, [handleGoLive]);
+
+  const handleLocalPlaybackStep = useCallback((deltaSeconds) => {
+    if (!mainStreamId) return;
+
+    const stagePlayer = playerRefs.current[mainStreamId];
+    const filmPlayer = playerRefs.current[`film-${mainStreamId}`];
+    const referencePlayer = stagePlayer ?? filmPlayer;
+    const currentTime = referencePlayer?.getCurrentTime?.();
+
+    if (!Number.isFinite(currentTime)) return;
+
+    const targetTime = Math.max(0, currentTime + deltaSeconds);
+    syncingRef.current = true;
+    lastSeekTs.current = Date.now();
+    try { stagePlayer?.seekTo?.(targetTime, true); } catch (_) {}
+    try { filmPlayer?.seekTo?.(targetTime, true); } catch (_) {}
+    syncingRef.current = false;
+  }, [mainStreamId]);
+
+  const handleGoLiveLocal = useCallback(() => {
+    if (!mainStreamId) return;
+
+    const stagePlayer = playerRefs.current[mainStreamId];
+    const filmPlayer = playerRefs.current[`film-${mainStreamId}`];
+    const offset = offsetsRef.current[mainStreamId] ?? 0;
+
+    syncingRef.current = true;
+    lastSeekTs.current = Date.now();
+
+    try {
+      const duration = stagePlayer?.getDuration?.() ?? filmPlayer?.getDuration?.() ?? 0;
+      const liveEdge = duration > 0 ? duration : 9999999;
+      const target = Math.max(0, liveEdge - offset);
+      stagePlayer?.seekTo?.(target, true);
+      filmPlayer?.seekTo?.(target, true);
+    } catch (_) {}
+
+    syncingRef.current = false;
+  }, [mainStreamId]);
+
+  const handleResyncLocal = useCallback(() => {
+    if (!mainStreamId) return;
+
+    const anchor = streamsRef.current.find((stream) => stream.is_anchor);
+    const anchorPlayer = anchor ? playerRefs.current[anchor.id] : null;
+    const anchorTime = anchorPlayer?.getCurrentTime?.() ?? 0;
+
+    if (!anchor || !Number.isFinite(anchorTime) || anchorTime <= 0) {
+      handleGoLiveLocal();
+      return;
+    }
+
+    const stagePlayer = playerRefs.current[mainStreamId];
+    const filmPlayer = playerRefs.current[`film-${mainStreamId}`];
+    const offset = offsetsRef.current[mainStreamId] ?? 0;
+    const target = Math.max(0, anchorTime - offset);
+
+    syncingRef.current = true;
+    lastSeekTs.current = Date.now();
+    try { stagePlayer?.seekTo?.(target, true); } catch (_) {}
+    try { filmPlayer?.seekTo?.(target, true); } catch (_) {}
+    syncingRef.current = false;
+  }, [handleGoLiveLocal, mainStreamId]);
 
   // Delegate controls to another participant
   const handleDelegateControl = useCallback(async (delegateeUserId, displayName) => {
@@ -1404,309 +1489,279 @@ export default function Viewer() {
         />
       )}
 
-      {viewMode === 'wall' ? (
-        <div
-          className="grid gap-2 sm:gap-3 mb-2 sm:mb-3 mx-auto w-full justify-center"
-          style={{
-            gridTemplateColumns: `repeat(${effectiveWallColumnCount}, minmax(0, 1fr))`,
-            ...(effectiveWallGridMaxWidth ? { maxWidth: `${effectiveWallGridMaxWidth}px` } : {}),
-          }}
+      <div className={`mb-2 sm:mb-3 ${isWallView ? '' : 'flex justify-center'}`}>
+        <motion.div
+          layout
+          className={isWallView
+            ? 'grid gap-2 sm:gap-3 mx-auto w-full justify-center'
+            : 'glass-card aspect-video w-full border border-white/10 rounded-2xl overflow-hidden relative mx-auto'}
+          style={isWallView
+            ? {
+                gridTemplateColumns: `repeat(${effectiveWallColumnCount}, minmax(0, 1fr))`,
+                ...(effectiveWallGridMaxWidth ? { maxWidth: `${effectiveWallGridMaxWidth}px` } : {}),
+              }
+            : {
+                width: 'min(100%, calc((100vh - 360px) * 16 / 9))',
+                maxHeight: 'calc(100vh - 360px)',
+                minHeight: isCycleView ? (isMobileLayout ? '70vh' : 'min(78vh, 920px)') : '220px',
+                height: isCycleView ? (isMobileLayout ? '70vh' : 'min(78vh, 920px)') : undefined,
+                backgroundColor: isCycleView ? '#000000' : undefined,
+                boxShadow: isCycleView ? '0 24px 80px rgba(0,0,0,0.35)' : undefined,
+              }}
+          onMouseMove={isCycleView ? revealCycleUi : undefined}
+          onClick={isCycleView ? revealCycleUi : undefined}
+          onTouchStart={isCycleView ? ((event) => {
+            cycleTouchStartRef.current = event.changedTouches[0]?.clientX ?? null;
+            revealCycleUi();
+          }) : undefined}
+          onTouchEnd={isCycleView ? ((event) => {
+            const startX = cycleTouchStartRef.current;
+            if (startX === null || startX === undefined) return;
+            const endX = event.changedTouches[0]?.clientX ?? startX;
+            const delta = endX - startX;
+            if (Math.abs(delta) > 48) {
+              handleCycleStep(delta < 0 ? 1 : -1);
+            }
+            cycleTouchStartRef.current = null;
+          }) : undefined}
         >
-          {visibleStreams.map((stream) => {
-            const isActive = stream.id === mainStreamId;
-
-            return (
-              <div key={`wall-wrap-${stream.id}`} className="flex flex-col gap-1">
-                <motion.button
-                  layout
-                  whileHover={{ y: -2, scale: 1.005 }}
-                  whileTap={{ scale: 0.99 }}
-                  onClick={() => handleSwapStream(stream.id)}
-                  className={`relative aspect-video bg-black rounded-2xl overflow-hidden border-2 transition-all ${
+          {visibleStreams.length > 0 ? (
+            visibleStreams.map((stream) => {
+              const isActive = stream.id === mainStreamId;
+              const stageWrapperClass = isWallView
+                ? `relative aspect-video overflow-hidden rounded-2xl border-2 bg-black transition-all ${
                     isActive ? 'border-pov-accent shadow-lg shadow-pov-accent/20' : 'border-pov-border hover:border-pov-muted'
-                  }`}
+                  }`
+                : `absolute inset-0 transition-opacity duration-200 ${isActive ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`;
+
+              return (
+                <motion.div
+                  layout
+                  key={`stage-${stream.id}`}
+                  initial={false}
+                  animate={{ opacity: isWallView ? 1 : (isActive ? 1 : 0), scale: isWallView ? 1 : (isActive ? 1 : (isCycleView ? 1.01 : 0.985)) }}
+                  transition={{ duration: 0.22, ease: 'easeOut' }}
+                  className={stageWrapperClass}
                 >
                   <StreamPlayer
                     streamUrl={stream.youtube_url}
                     platform={stream.platform}
-                    isMain={stream.id === mainStreamId}
-                    onReady={(player) => {
-                      handlePlayerReady(stream.id, player);
-                    }}
+                    isMain={isActive}
+                    onReady={(player) => handlePlayerReady(stream.id, player)}
                     onStateChange={(state) => handleStageStateChange(stream.id, state)}
                     className="w-full h-full"
                   />
-                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/85 to-transparent px-3 py-2 pointer-events-none">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-semibold text-white truncate">{stream.display_name}</span>
-                      <StatusIndicators
-                        stream={stream}
-                        isHost={stream.user_id === session?.host_id}
-                        isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId}
+
+                  {isWallView ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handleSwapStream(stream.id)}
+                        className="absolute inset-0 z-20"
+                        aria-label={`Focus ${stream.display_name}`}
                       />
-                    </div>
-                  </div>
-                  {isActive && <div className="absolute top-0 left-0 right-0 h-0.5 bg-pov-accent" />}
-                </motion.button>
-
-                {hasControl && !isVod && (!isMobileLayout || isActive) && (
-                  <OffsetControls
-                    streamId={stream.id}
-                    isAnchor={stream.is_anchor}
-                    offset={offsets[stream.id] ?? 0}
-                    onStep={stepOffset}
-                    onPromoteAnchor={handlePromoteAnchor}
-                  />
-                )}
-              </div>
-            );
-          })}
-
-          {canAddPov && renderAddPovTile(
-            'flex flex-col gap-1',
-            'relative aspect-video bg-black rounded-lg overflow-hidden border-2 border-dashed border-pov-accent/50 transition-all hover:border-pov-accent'
-          )}
-
-          {visibleStreams.length === 0 && !canAddPov && (
-            <div className="col-span-full w-full h-40 flex items-center justify-center rounded-lg border border-dashed border-pov-border bg-pov-surface/50">
-              <p className="text-pov-muted text-sm">Waiting for streams to join...</p>
-            </div>
-          )}
-        </div>
-      ) : viewMode === 'cycle' ? (
-        <div className="mb-2 sm:mb-3">
-          <div
-            className="relative overflow-hidden rounded-[1.5rem] border border-white/10 bg-black shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
-            onMouseMove={revealCycleUi}
-            onClick={revealCycleUi}
-            onTouchStart={(event) => {
-              cycleTouchStartRef.current = event.changedTouches[0]?.clientX ?? null;
-              revealCycleUi();
-            }}
-            onTouchEnd={(event) => {
-              const startX = cycleTouchStartRef.current;
-              if (startX === null || startX === undefined) return;
-              const endX = event.changedTouches[0]?.clientX ?? startX;
-              const delta = endX - startX;
-              if (Math.abs(delta) > 48) {
-                handleCycleStep(delta < 0 ? 1 : -1);
-              }
-              cycleTouchStartRef.current = null;
-            }}
-            style={{
-              minHeight: isMobileLayout ? '70vh' : 'min(78vh, 920px)',
-              height: isMobileLayout ? '70vh' : 'min(78vh, 920px)',
-            }}
-          >
-            {visibleStreams.length > 0 ? (
-              visibleStreams.map((stream) => (
-                <motion.div
-                  key={`cycle-${stream.id}`}
-                  initial={false}
-                  animate={{ opacity: stream.id === mainStreamId ? 1 : 0, scale: stream.id === mainStreamId ? 1 : 1.01 }}
-                  transition={{ duration: 0.22, ease: 'easeOut' }}
-                  className={`absolute inset-0 ${stream.id === mainStreamId ? 'z-10' : 'z-0 pointer-events-none'}`}
-                >
-                  <StreamPlayer
-                    streamUrl={stream.youtube_url}
-                    platform={stream.platform}
-                    isMain={stream.id === mainStreamId}
-                    onReady={(player) => handlePlayerReady(stream.id, player)}
-                    onStateChange={(state) => handleStageStateChange(stream.id, state)}
-                    className="h-full w-full"
-                  />
-                </motion.div>
-              ))
-            ) : (
-              <div className="flex h-full items-center justify-center">
-                <div className="text-center">
-                  <p className="text-pov-muted text-sm">Waiting for streams to join...</p>
-                </div>
-              </div>
-            )}
-
-            {visibleStreams.length > 0 && (
-              <>
-                <div className={`pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/70 via-black/20 to-transparent px-4 py-5 transition-opacity duration-200 ${cycleUiVisible ? 'opacity-100' : 'opacity-0'}`}>
-                  <div className="max-w-3xl">
-                    <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-white/14 bg-black/25 px-3 py-1 text-[10px] font-mono uppercase tracking-[0.18em] text-white/70 backdrop-blur-md">
-                      <span>Current POV</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="truncate text-xl font-semibold text-white sm:text-3xl">
-                        {visibleStreams[cycleActiveIndex]?.display_name || 'POV'}
-                      </span>
-                      {visibleStreams[cycleActiveIndex] && (
-                        <StatusIndicators
-                          stream={visibleStreams[cycleActiveIndex]}
-                          isHost={visibleStreams[cycleActiveIndex].user_id === session?.host_id}
-                          isControlDelegated={!!controlHolderUserId && visibleStreams[cycleActiveIndex].user_id === controlHolderUserId}
-                        />
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => handleCycleStep(-1)}
-                  onMouseEnter={revealCycleUi}
-                  className={`absolute left-3 top-1/2 z-30 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-full border border-white/14 bg-black/20 text-xl text-white shadow-lg backdrop-blur-md transition-opacity duration-200 sm:left-4 sm:h-14 sm:w-14 ${cycleUiVisible ? 'opacity-100' : 'opacity-0'}`}
-                  aria-label="Previous POV"
-                >
-                  ←
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleCycleStep(1)}
-                  onMouseEnter={revealCycleUi}
-                  className={`absolute right-3 top-1/2 z-30 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-full border border-white/14 bg-black/20 text-xl text-white shadow-lg backdrop-blur-md transition-opacity duration-200 sm:right-4 sm:h-14 sm:w-14 ${cycleUiVisible ? 'opacity-100' : 'opacity-0'}`}
-                  aria-label="Next POV"
-                >
-                  →
-                </button>
-
-                <CycleViewPicker
-                  streams={visibleStreams}
-                  activeStreamId={mainStreamId}
-                  infoStreamId={cycleInfoStream?.id ?? mainStreamId}
-                  visible={cycleUiVisible}
-                  onHoverStream={(streamId) => {
-                    setCycleHoverStreamId(streamId);
-                    revealCycleUi();
-                  }}
-                  onLeave={() => setCycleHoverStreamId(mainStreamId)}
-                  onSelectStream={(streamId) => {
-                    handleSwapStream(streamId);
-                    setCycleHoverStreamId(streamId);
-                    revealCycleUi();
-                  }}
-                />
-              </>
-            )}
-          </div>
-        </div>
-      ) : (
-        <>
-          {/* Main Stage — shows the selected stream's player */}
-          <div className="mb-2 sm:mb-3 flex justify-center">
-            <motion.div
-              layout
-              className="glass-card aspect-video w-full border border-white/10 rounded-2xl overflow-hidden relative mx-auto"
-              style={{
-                width: 'min(100%, calc((100vh - 360px) * 16 / 9))',
-                maxHeight: 'calc(100vh - 360px)',
-                minHeight: '220px',
-              }}
-            >
-              {visibleStreams.length > 0 ? (
-                visibleStreams.map((stream) => (
-                  <motion.div
-                    layout
-                    key={`stage-${stream.id}`}
-                    initial={false}
-                    animate={{ opacity: stream.id === mainStreamId ? 1 : 0, scale: stream.id === mainStreamId ? 1 : 0.985 }}
-                    transition={{ duration: 0.22, ease: 'easeOut' }}
-                    className={`absolute inset-0 transition-opacity duration-200 ${
-                      stream.id === mainStreamId ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'
-                    }`}
-                  >
-                    <StreamPlayer
-                      streamUrl={stream.youtube_url}
-                      platform={stream.platform}
-                      isMain={stream.id === mainStreamId}
-                      onReady={(player) => handlePlayerReady(stream.id, player)}
-                      onStateChange={(state) => handleStageStateChange(stream.id, state)}
-                      className="w-full h-full"
-                    />
-                    {/* Main stage name overlay */}
-                    {stream.id === mainStreamId && (
-                      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-4 py-3 pointer-events-none">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold text-white">{stream.display_name}</span>
+                      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/85 to-transparent px-3 py-2 pointer-events-none z-10">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-white truncate">{stream.display_name}</span>
                           <StatusIndicators
                             stream={stream}
                             isHost={stream.user_id === session?.host_id}
+                            isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId}
                           />
                         </div>
                       </div>
-                    )}
-                  </motion.div>
-                ))
-              ) : (
-                <div className="w-full h-full flex items-center justify-center">
-                  <div className="text-center">
-                    <p className="text-pov-muted text-sm">Waiting for streams to join...</p>
-                    <div className="mt-3 flex gap-2 justify-center">
-                      {[...Array(5)].map((_, i) => (
-                        <div
-                          key={i}
-                          className="w-3 h-3 bg-pov-border rounded-full animate-pulse"
-                          style={{ animationDelay: `${i * 150}ms` }}
+                      {isActive && <div className="absolute top-0 left-0 right-0 h-0.5 bg-pov-accent z-10" />}
+                    </>
+                  ) : !isCycleView && isActive ? (
+                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-4 py-3 pointer-events-none z-10">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-white">{stream.display_name}</span>
+                        <StatusIndicators
+                          stream={stream}
+                          isHost={stream.user_id === session?.host_id}
+                          isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId}
                         />
-                      ))}
+                      </div>
                     </div>
+                  ) : null}
+                </motion.div>
+              );
+            })
+          ) : (
+            <div className={`${isWallView ? 'col-span-full h-40' : 'w-full h-full min-h-[220px]'} flex items-center justify-center`}>
+              <div className="text-center">
+                <p className="text-pov-muted text-sm">Waiting for streams to join...</p>
+                {!isWallView && (
+                  <div className="mt-3 flex gap-2 justify-center">
+                    {[...Array(5)].map((_, i) => (
+                      <div
+                        key={i}
+                        className="w-3 h-3 bg-pov-border rounded-full animate-pulse"
+                        style={{ animationDelay: `${i * 150}ms` }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {isCycleView && visibleStreams.length > 0 && (
+            <>
+              <div className={`pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/70 via-black/20 to-transparent px-4 py-5 transition-opacity duration-200 ${cycleUiVisible ? 'opacity-100' : 'opacity-0'}`}>
+                <div className="max-w-3xl">
+                  <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-white/14 bg-black/25 px-3 py-1 text-[10px] font-mono uppercase tracking-[0.18em] text-white/70 backdrop-blur-md">
+                    <span>Current POV</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-xl font-semibold text-white sm:text-3xl">
+                      {activeMainStream?.display_name || 'POV'}
+                    </span>
+                    {activeMainStream && (
+                      <StatusIndicators
+                        stream={activeMainStream}
+                        isHost={activeMainStream.user_id === session?.host_id}
+                        isControlDelegated={!!controlHolderUserId && activeMainStream.user_id === controlHolderUserId}
+                      />
+                    )}
                   </div>
                 </div>
-              )}
-            </motion.div>
-          </div>
+              </div>
 
-          {/* Filmstrip — preview cards only in stage mode to avoid duplicate live players */}
-          <div
-            className={`mb-2 pb-1 ${isMobileLayout ? '-mx-2.5 flex snap-x snap-mandatory gap-2 overflow-x-auto px-2.5 pb-2' : 'grid gap-2 sm:gap-3 overflow-x-auto'}`}
-            style={isMobileLayout ? undefined : { gridTemplateColumns: `repeat(auto-fill, minmax(${effectiveFilmstripTileWidth}px, ${effectiveFilmstripTileWidth}px))`, justifyContent: 'center' }}
-          >
-            {visibleStreams.map((stream) => {
-              const isActive = stream.id === mainStreamId;
+              <button
+                type="button"
+                onClick={() => handleCycleStep(-1)}
+                onMouseEnter={revealCycleUi}
+                className={`absolute left-3 top-1/2 z-30 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-full border border-white/14 bg-black/20 text-xl text-white shadow-lg backdrop-blur-md transition-opacity duration-200 sm:left-4 sm:h-14 sm:w-14 ${cycleUiVisible ? 'opacity-100' : 'opacity-0'}`}
+                aria-label="Previous POV"
+              >
+                ←
+              </button>
+              <button
+                type="button"
+                onClick={() => handleCycleStep(1)}
+                onMouseEnter={revealCycleUi}
+                className={`absolute right-3 top-1/2 z-30 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-full border border-white/14 bg-black/20 text-xl text-white shadow-lg backdrop-blur-md transition-opacity duration-200 sm:right-4 sm:h-14 sm:w-14 ${cycleUiVisible ? 'opacity-100' : 'opacity-0'}`}
+                aria-label="Next POV"
+              >
+                →
+              </button>
 
-              return (
-                <div
-                  key={`film-wrap-${stream.id}`}
-                  className={`flex flex-col gap-1 ${isMobileLayout ? 'w-[210px] shrink-0 snap-start first:pl-0' : ''}`}
-                  style={isMobileLayout ? { width: `${effectiveFilmstripTileWidth}px` } : undefined}
-                >
-                  <StreamPreviewCard
-                    stream={stream}
-                    isActive={isActive}
-                    onClick={() => handleSwapStream(stream.id)}
-                    isHost={stream.user_id === session?.host_id}
-                    isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId}
-                    label={stream.is_anchor ? 'Anchor' : null}
-                    className={isMobileLayout ? 'min-h-full' : ''}
-                  />
+              <CycleViewPicker
+                streams={visibleStreams}
+                activeStreamId={mainStreamId}
+                infoStreamId={cycleInfoStream?.id ?? mainStreamId}
+                visible={cycleUiVisible}
+                onHoverStream={(streamId) => {
+                  setCycleHoverStreamId(streamId);
+                  revealCycleUi();
+                }}
+                onLeave={() => setCycleHoverStreamId(mainStreamId)}
+                onSelectStream={(streamId) => {
+                  handleSwapStream(streamId);
+                  setCycleHoverStreamId(streamId);
+                  revealCycleUi();
+                }}
+              />
+            </>
+          )}
+        </motion.div>
+      </div>
 
-                  {hasControl && !isVod && (!isMobileLayout || isActive) && (
-                    <OffsetControls
-                      streamId={stream.id}
-                      isAnchor={stream.is_anchor}
-                      offset={offsets[stream.id] ?? 0}
-                      onStep={stepOffset}
-                      onPromoteAnchor={handlePromoteAnchor}
+      <div
+        className={`${viewMode === 'stage' ? 'mb-2 pb-1' : 'hidden'} ${isMobileLayout ? '-mx-2.5 flex snap-x snap-mandatory gap-2 overflow-x-auto px-2.5 pb-2' : 'grid gap-2 sm:gap-3 overflow-x-auto'}`}
+        style={isMobileLayout ? undefined : { gridTemplateColumns: `repeat(auto-fill, minmax(${effectiveFilmstripTileWidth}px, ${effectiveFilmstripTileWidth}px))`, justifyContent: 'center' }}
+      >
+        {visibleStreams.map((stream) => {
+          const isActive = stream.id === mainStreamId;
+
+          return (
+            <div
+              key={`film-wrap-${stream.id}`}
+              className={`flex flex-col gap-1 ${isMobileLayout ? 'w-[210px] shrink-0 snap-start first:pl-0' : ''}`}
+              style={isMobileLayout ? { width: `${effectiveFilmstripTileWidth}px` } : undefined}
+            >
+              <motion.button
+                type="button"
+                layout
+                whileHover={{ y: -2, scale: 1.01 }}
+                whileTap={{ scale: 0.985 }}
+                transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+                onClick={() => handleSwapStream(stream.id)}
+                className={`group relative overflow-hidden rounded-2xl border text-left ${
+                  isActive
+                    ? 'border-pov-accent/70 shadow-[0_16px_50px_rgba(108,92,231,0.22)]'
+                    : 'border-white/8 hover:border-white/18'
+                } glass-card ${isMobileLayout ? 'min-h-full' : ''}`}
+              >
+                <div className="relative aspect-video overflow-hidden bg-black">
+                  <div className="pointer-events-none absolute inset-0">
+                    <StreamPlayer
+                      streamUrl={stream.youtube_url}
+                      platform={stream.platform}
+                      isMain={false}
+                      onReady={(player) => handlePlayerReady(`film-${stream.id}`, player)}
+                      className="h-full w-full"
                     />
+                  </div>
+
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent" />
+
+                  {stream.is_anchor && (
+                    <div className="absolute left-3 top-3 rounded-full border border-white/10 bg-black/35 px-2 py-1 text-[10px] font-mono uppercase tracking-wide text-white/80 backdrop-blur-md">
+                      Anchor
+                    </div>
                   )}
-                </div>
-              );
-            })}
 
-            {canAddPov && renderAddPovTile(
-              'flex flex-col gap-1',
-              'relative aspect-video rounded-lg border-2 border-dashed border-pov-accent/50 overflow-hidden transition-all hover:border-pov-accent'
-            )}
-
-            {visibleStreams.length === 0 && !canAddPov && (
-              [...Array(4)].map((_, i) => (
-                <div
-                  key={i}
-                  className="w-full sm:flex-shrink-0 sm:w-48 aspect-video rounded-lg border border-dashed border-pov-border bg-pov-surface/50 animate-pulse flex items-center justify-center"
-                >
-                  <span className="text-[10px] text-pov-muted/40 font-mono">POV {i + 1}</span>
+                  {isActive && <div className="absolute inset-x-0 top-0 h-0.5 bg-pov-accent shadow-[0_0_18px_rgba(108,92,231,0.6)]" />}
                 </div>
-              ))
-            )}
-          </div>
-        </>
-      )}
+
+                <div className="absolute inset-x-0 bottom-0 p-3 pointer-events-none">
+                  <div className="glass-pill flex items-center justify-between gap-2 rounded-xl px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-semibold text-white">{stream.display_name}</p>
+                      <p className="mt-0.5 text-[10px] font-mono uppercase tracking-wide text-white/55">
+                        {isActive ? 'On stage' : 'Tap to focus'}
+                      </p>
+                    </div>
+                    <StatusIndicators
+                      stream={stream}
+                      isHost={stream.user_id === session?.host_id}
+                      isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId}
+                    />
+                  </div>
+                </div>
+              </motion.button>
+
+              {hasControl && !isVod && (!isMobileLayout || isActive) && (
+                <OffsetControls
+                  streamId={stream.id}
+                  isAnchor={stream.is_anchor}
+                  offset={offsets[stream.id] ?? 0}
+                  onStep={stepOffset}
+                  onPromoteAnchor={handlePromoteAnchor}
+                />
+              )}
+            </div>
+          );
+        })}
+
+        {canAddPov && renderAddPovTile(
+          'flex flex-col gap-1',
+          'relative aspect-video rounded-lg border-2 border-dashed border-pov-accent/50 overflow-hidden transition-all hover:border-pov-accent'
+        )}
+
+        {visibleStreams.length === 0 && !canAddPov && (
+          [...Array(4)].map((_, i) => (
+            <div
+              key={i}
+              className="w-full sm:flex-shrink-0 sm:w-48 aspect-video rounded-lg border border-dashed border-pov-border bg-pov-surface/50 animate-pulse flex items-center justify-center"
+            >
+              <span className="text-[10px] text-pov-muted/40 font-mono">POV {i + 1}</span>
+            </div>
+          ))
+        )}
+      </div>
 
       {/* Sync Status Panel — host/delegate, live sessions */}
       {hasControl && !isVod && effectiveSyncStats && (
@@ -1714,6 +1769,22 @@ export default function Viewer() {
           streams={visibleStreams}
           syncStats={effectiveSyncStats}
           session={session}
+        />
+      )}
+
+      {visibleStreams.length > 0 && mainStreamId && (
+        <PlaybackControls
+          title={hasControl ? 'Personal Playback' : 'Playback Controls'}
+          description={
+            hasControl
+              ? 'These signed nudges only change your current POV locally. Room-wide sync stays in Master Controls.'
+              : 'These controls are personal to your screen, so you can fine-tune the current POV without affecting the room.'
+          }
+          activeLabel={visibleStreams.find((stream) => stream.id === mainStreamId)?.display_name || 'POV'}
+          onStep={handleLocalPlaybackStep}
+          onGoLive={handleGoLiveLocal}
+          onResync={handleResyncLocal}
+          showLiveActions={!isVod}
         />
       )}
 
@@ -1975,6 +2046,9 @@ function CycleViewPicker({
           <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-white/55">POV Picker</p>
           <p className="truncate text-sm font-semibold text-white sm:text-[15px]">
             {infoStream?.display_name || 'Select a POV'}
+          </p>
+          <p className="mt-1 text-[11px] text-white/45">
+            Swipe, tap the arrows, or use ← and →.
           </p>
         </div>
         <span className="shrink-0 text-[10px] font-mono uppercase tracking-[0.16em] text-pov-success">

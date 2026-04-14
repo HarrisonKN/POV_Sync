@@ -1,9 +1,18 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useActiveSession } from '../hooks/useActiveSession';
 import { supabase } from '../lib/supabase';
 import SessionResumeCard from '../components/SessionResumeCard';
+import FollowButton from '../components/FollowButton';
+import {
+  fetchFollowLists,
+  fetchProfileSessions,
+  fetchSessionsForUsers,
+  followUser,
+  searchUsersByName,
+  unfollowUser,
+} from '../lib/social';
 
 /* ── helpers ────────────────────────────────────────────────── */
 
@@ -32,6 +41,10 @@ function duration(start, end) {
   return `${hrs}h ${mins % 60}m`;
 }
 
+function memberSince(dateStr) {
+  return new Date(dateStr).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+}
+
 /* ── component ──────────────────────────────────────────────── */
 
 export default function Home() {
@@ -55,11 +68,47 @@ export default function Home() {
   const [liveSessions, setLiveSessions] = useState([]);
   const [recentSessions, setRecentSessions] = useState([]);
   const [publicLiveCount, setPublicLiveCount] = useState(0);
+  const [followingProfiles, setFollowingProfiles] = useState([]);
+  const [followingSessions, setFollowingSessions] = useState([]);
+  const [followingIds, setFollowingIds] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState('');
+  const [socialError, setSocialError] = useState('');
+  const [socialBusyUserId, setSocialBusyUserId] = useState(null);
+
+  const followingIdSet = useMemo(() => new Set(followingIds), [followingIds]);
+  const followingLiveSessions = useMemo(
+    () => followingSessions.filter((session) => session.status === 'live').slice(0, 6),
+    [followingSessions]
+  );
+  const followingRecentSessions = useMemo(
+    () => followingSessions.filter((session) => session.status !== 'live').slice(0, 6),
+    [followingSessions]
+  );
+
+  const loadFollowingState = useCallback(async () => {
+    if (!user?.id) return;
+
+    setSocialError('');
+    const followSummary = await fetchFollowLists(user.id, user.id);
+    setFollowingIds(followSummary.followingIds);
+    setFollowingProfiles(followSummary.following.slice(0, 8));
+
+    if (!followSummary.followingIds.length) {
+      setFollowingSessions([]);
+      return;
+    }
+
+    const sessions = await fetchSessionsForUsers(followSummary.followingIds);
+    setFollowingSessions(sessions);
+  }, [user?.id]);
 
   /* ── Fetch data ────────────────────────────────────────── */
 
   useEffect(() => {
-    if (!user) return;
+    if (!user?.id) return;
 
     (async () => {
       try {
@@ -69,39 +118,61 @@ export default function Home() {
           .eq('status', 'live');
         setPublicLiveCount(count ?? 0);
 
-        const { data: hosted } = await supabase
-          .from('sessions')
-          .select('id, status, created_at, ended_at, host_id, streams!streams_session_id_fkey(id, display_name, user_id, youtube_url, is_active, left_at, users(avatar_url, display_name))')
-          .eq('host_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(10);
-
-        const { data: streamRows } = await supabase
-          .from('streams')
-          .select('session_id')
-          .eq('user_id', user.id);
-
-        let joined = [];
-        if (streamRows?.length) {
-          const ids = [...new Set(streamRows.map((s) => s.session_id))];
-          const { data } = await supabase
-            .from('sessions')
-            .select('id, status, created_at, ended_at, host_id, streams!streams_session_id_fkey(id, display_name, user_id, youtube_url, is_active, left_at, users(avatar_url, display_name))')
-            .in('id', ids)
-            .order('created_at', { ascending: false })
-            .limit(10);
-          joined = data || [];
-        }
+        const { hostedSessions, participatedSessions } = await fetchProfileSessions(user.id);
 
         const map = new Map();
-        [...(hosted || []), ...joined].forEach((s) => { if (!map.has(s.id)) map.set(s.id, s); });
+        [...hostedSessions, ...participatedSessions].forEach((s) => { if (!map.has(s.id)) map.set(s.id, s); });
         const all = [...map.values()].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
         setLiveSessions(all.filter((s) => s.status === 'live'));
         setRecentSessions(all.filter((s) => s.status !== 'live').slice(0, 8));
-      } catch { /* silent */ }
+        await loadFollowingState();
+      } catch (err) {
+        console.error('Error loading dashboard:', err);
+        setSocialError('Could not load your following feed yet.');
+      }
     })();
-  }, [user]);
+  }, [loadFollowingState, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return undefined;
+
+    const trimmed = searchQuery.trim();
+    if (trimmed.length < 2) {
+      setSearchResults([]);
+      setSearchError('');
+      setSearchLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      setSearchLoading(true);
+      setSearchError('');
+
+      try {
+        const results = await searchUsersByName(trimmed, user.id);
+        if (!cancelled) {
+          setSearchResults(results);
+        }
+      } catch (err) {
+        console.error('User search failed:', err);
+        if (!cancelled) {
+          setSearchResults([]);
+          setSearchError('Search is unavailable right now.');
+        }
+      } finally {
+        if (!cancelled) {
+          setSearchLoading(false);
+        }
+      }
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [searchQuery, user?.id]);
 
   /* ── Keyboard shortcut: Ctrl+K to toggle join ──────────── */
 
@@ -164,6 +235,28 @@ export default function Home() {
   function togglePanel(panel) {
     setActivePanel((v) => v === panel ? null : panel);
   }
+
+  const handleToggleFollow = useCallback(async (targetUserId, shouldFollow) => {
+    if (!user?.id || targetUserId === user.id) return;
+
+    setSocialBusyUserId(targetUserId);
+    setSocialError('');
+
+    try {
+      if (shouldFollow) {
+        await followUser(user.id, targetUserId);
+      } else {
+        await unfollowUser(user.id, targetUserId);
+      }
+
+      await loadFollowingState();
+    } catch (err) {
+      console.error('Follow toggle failed:', err);
+      setSocialError('Could not update follow state. Please try again.');
+    } finally {
+      setSocialBusyUserId(null);
+    }
+  }, [loadFollowingState, user?.id]);
 
   /* ── signed-out landing ────────────────────────────────── */
 
@@ -427,6 +520,130 @@ export default function Home() {
         </div>
       </div>
 
+      <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr] mb-6 sm:mb-8 animate-in" style={{ animationDelay: '0.045s' }}>
+        <div className="bg-pov-surface border border-pov-border rounded-xl p-4 sm:p-5">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div>
+              <p className="text-[10px] font-mono text-pov-accent uppercase tracking-wider">Discover People</p>
+              <p className="text-sm text-pov-muted mt-1">Find friends again by display name and follow them for quick access.</p>
+            </div>
+            <span className="text-[10px] font-mono text-pov-muted bg-pov-bg border border-pov-border rounded-full px-2.5 py-1">
+              {followingIds.length} following
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search display names"
+              className="w-full bg-pov-bg border border-pov-border rounded-lg px-4 py-2.5 text-sm text-pov-text placeholder:text-pov-muted/40 focus:outline-none focus:border-pov-accent transition-colors"
+            />
+
+            {searchQuery.trim().length > 0 && (
+              <div className="rounded-xl border border-pov-border/60 bg-pov-bg/40 p-3">
+                {searchLoading ? (
+                  <p className="text-xs text-pov-muted">Searching people…</p>
+                ) : searchError ? (
+                  <p className="text-xs text-pov-danger">{searchError}</p>
+                ) : searchResults.length > 0 ? (
+                  <div className="space-y-2">
+                    {searchResults.map((result) => {
+                      const isFollowing = followingIdSet.has(result.id);
+                      return (
+                        <div key={result.id} className="flex items-center justify-between gap-3 rounded-lg border border-pov-border/60 bg-pov-surface/60 px-3 py-2.5">
+                          <Link to={`/profile/${result.id}`} className="min-w-0 flex flex-1 items-center gap-3">
+                            <Avatar profile={result} size="sm" />
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium text-pov-text hover:text-pov-accent transition-colors">{result.display_name}</p>
+                              <p className="text-[11px] text-pov-muted">Member since {memberSince(result.created_at)}</p>
+                            </div>
+                          </Link>
+                          <FollowButton
+                            compact
+                            busy={socialBusyUserId === result.id}
+                            isFollowing={isFollowing}
+                            onClick={() => handleToggleFollow(result.id, !isFollowing)}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : searchQuery.trim().length >= 2 ? (
+                  <p className="text-xs text-pov-muted">No matching people yet. Try another display name.</p>
+                ) : (
+                  <p className="text-xs text-pov-muted">Type at least 2 characters to search.</p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-pov-surface border border-pov-border rounded-xl p-4 sm:p-5">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div>
+              <p className="text-[10px] font-mono text-pov-success uppercase tracking-wider">Following</p>
+              <p className="text-sm text-pov-muted mt-1">People you follow show up here and power your live + VOD feed.</p>
+            </div>
+          </div>
+
+          {followingProfiles.length > 0 ? (
+            <div className="space-y-2">
+              {followingProfiles.map((profileItem) => (
+                <Link
+                  key={profileItem.id}
+                  to={`/profile/${profileItem.id}`}
+                  className="flex items-center justify-between gap-3 rounded-lg border border-pov-border/60 bg-pov-bg/40 px-3 py-2.5 hover:border-pov-accent/20 transition-colors"
+                >
+                  <div className="min-w-0 flex items-center gap-3">
+                    <Avatar profile={profileItem} size="sm" />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-pov-text">{profileItem.display_name}</p>
+                      <p className="text-[11px] text-pov-muted">Open profile</p>
+                    </div>
+                  </div>
+                  <span className="text-xs font-mono text-pov-accent">→</span>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-pov-border px-4 py-6 text-center text-sm text-pov-muted">
+              Follow a few friends to build your rediscoverable feed.
+            </div>
+          )}
+
+          {socialError && (
+            <p className="mt-3 text-xs text-pov-danger">{socialError}</p>
+          )}
+        </div>
+      </div>
+
+      {followingLiveSessions.length > 0 && (
+        <div className="mb-8 animate-in" style={{ animationDelay: '0.07s' }}>
+          <h2 className="text-xs font-mono text-pov-success uppercase tracking-wider mb-3 flex items-center gap-2">
+            <span className="live-dot w-1.5 h-1.5 rounded-full bg-pov-success" />
+            Following Live Now
+          </h2>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {followingLiveSessions.map((session) => (
+              <LiveSessionCard key={`following-live-${session.id}`} session={session} userId={user.id} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {followingRecentSessions.length > 0 && (
+        <div className="mb-8 animate-in" style={{ animationDelay: '0.085s' }}>
+          <h2 className="text-xs font-mono text-pov-accent uppercase tracking-wider mb-3">Following VODs</h2>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {followingRecentSessions.map((session) => (
+              <RecentSessionCard key={`following-vod-${session.id}`} session={session} userId={user.id} />
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── Live sessions — full-width attention-grabbing ─── */}
       {hasLive && (
         <div className="mb-8 animate-in" style={{ animationDelay: '0.06s' }}>
@@ -492,6 +709,20 @@ export default function Home() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function Avatar({ profile, size = 'md' }) {
+  const classes = size === 'sm' ? 'h-10 w-10 rounded-lg' : 'h-12 w-12 rounded-xl';
+
+  if (profile.avatar_url) {
+    return <img src={profile.avatar_url} alt="" className={`${classes} object-cover ring-1 ring-pov-border/50`} />;
+  }
+
+  return (
+    <div className={`${classes} flex items-center justify-center bg-pov-accent/15 text-sm font-mono text-pov-accent`}>
+      {(profile.display_name?.[0] ?? '?').toUpperCase()}
     </div>
   );
 }
