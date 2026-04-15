@@ -17,12 +17,21 @@ function YouTubePlayer({
   isMain = false,
   onReady,
   onStateChange,
+  onError,
   className = '',
 }) {
   const containerRef = useRef(null);
   const playerRef = useRef(null);
   const playerIdRef = useRef(`yt-player-${Math.random().toString(36).slice(2, 10)}`);
   const isMainRef = useRef(isMain);
+  const onReadyRef = useRef(onReady);
+  const onStateChangeRef = useRef(onStateChange);
+  const onErrorRef = useRef(onError);
+
+  // Keep callback refs current so event handlers always call the latest version
+  useEffect(() => { onReadyRef.current = onReady; }, [onReady]);
+  useEffect(() => { onStateChangeRef.current = onStateChange; }, [onStateChange]);
+  useEffect(() => { onErrorRef.current = onError; }, [onError]);
 
   const videoId = extractYouTubeVideoId(youtubeUrl);
 
@@ -82,11 +91,15 @@ function YouTubePlayer({
         events: {
           onReady: (event) => {
             if (destroyed) return;
-            if (onReady) onReady(event.target);
+            if (onReadyRef.current) onReadyRef.current(event.target);
           },
           onStateChange: (event) => {
             if (destroyed) return;
-            if (onStateChange) onStateChange(event.data);
+            if (onStateChangeRef.current) onStateChangeRef.current(event.data);
+          },
+          onError: (event) => {
+            if (destroyed) return;
+            if (onErrorRef.current) onErrorRef.current(event.data);
           },
         },
       });

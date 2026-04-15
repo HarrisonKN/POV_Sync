@@ -22,6 +22,7 @@ function StreamPlayer({
   isMain = false,
   onReady,
   onStateChange,
+  onError,
   className = '',
 }) {
   const platform = explicitPlatform || detectPlatform(streamUrl);
@@ -33,6 +34,7 @@ function StreamPlayer({
         isMain={isMain}
         onReady={onReady}
         onStateChange={onStateChange}
+        onError={onError}
         className={className}
       />
     );
@@ -45,6 +47,7 @@ function StreamPlayer({
       isMain={isMain}
       onReady={onReady}
       onStateChange={onStateChange}
+      onError={onError}
       className={className}
     />
   );

@@ -1,0 +1,1106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>POV Sync — UI/UX Review Checklist</title>
+  <style>
+    :root {
+      --bg: #0e0b14;
+      --surface: #1a1525;
+      --surface-hover: #241e32;
+      --border: #2e2640;
+      --text: #e8e4ef;
+      --text-muted: #9b93ab;
+      --accent: #a78bfa;
+      --accent-dim: rgba(167, 139, 250, 0.15);
+      --red: #f87171;
+      --red-bg: rgba(248, 113, 113, 0.1);
+      --red-border: rgba(248, 113, 113, 0.25);
+      --orange: #fb923c;
+      --orange-bg: rgba(251, 146, 60, 0.1);
+      --orange-border: rgba(251, 146, 60, 0.25);
+      --yellow: #facc15;
+      --yellow-bg: rgba(250, 204, 21, 0.1);
+      --yellow-border: rgba(250, 204, 21, 0.25);
+      --green: #4ade80;
+      --green-bg: rgba(74, 222, 128, 0.1);
+      --green-border: rgba(74, 222, 128, 0.25);
+      --blue: #60a5fa;
+      --blue-bg: rgba(96, 165, 250, 0.1);
+      --blue-border: rgba(96, 165, 250, 0.25);
+      --cyan: #22d3ee;
+      --cyan-bg: rgba(34, 211, 238, 0.1);
+      --cyan-border: rgba(34, 211, 238, 0.25);
+      --done-bg: rgba(74, 222, 128, 0.06);
+      --done-border: rgba(74, 222, 128, 0.2);
+      --wip-bg: rgba(34, 211, 238, 0.06);
+      --wip-border: rgba(34, 211, 238, 0.25);
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem 4rem;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+      padding-bottom: 2rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    header h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+      background: linear-gradient(135deg, var(--accent), #c4b5fd);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    header p {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+    }
+
+    /* Progress bar */
+    .progress-bar-container {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 2rem;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(12px);
+    }
+
+    .progress-stats {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.75rem;
+      font-size: 0.85rem;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .progress-stats .count { color: var(--accent); font-weight: 600; }
+    .progress-stats .wip-count { color: var(--cyan); font-weight: 600; font-size: 0.8rem; }
+    .progress-stats .percentage { color: var(--text-muted); }
+
+    .progress-track {
+      height: 8px;
+      background: var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      display: flex;
+    }
+
+    .progress-fill-done {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), #c4b5fd);
+      transition: width 0.4s ease;
+      width: 0%;
+    }
+
+    .progress-fill-wip {
+      height: 100%;
+      background: linear-gradient(90deg, var(--cyan-border), var(--cyan));
+      transition: width 0.4s ease;
+      width: 0%;
+      opacity: 0.6;
+    }
+
+    .filter-row {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .filter-btn {
+      font-size: 0.78rem;
+      padding: 0.3rem 0.75rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .filter-btn:hover { background: var(--surface-hover); color: var(--text); }
+    .filter-btn.active { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+
+    .filter-divider {
+      width: 1px;
+      background: var(--border);
+      align-self: stretch;
+      margin: 0 0.15rem;
+    }
+
+    /* Sections */
+    .section { margin-bottom: 2rem; }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .section-header:hover .section-title { color: var(--accent); }
+
+    .section-chevron {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      transition: transform 0.2s;
+      width: 1rem;
+      text-align: center;
+    }
+
+    .section-header.collapsed .section-chevron { transform: rotate(-90deg); }
+
+    .section-title { font-size: 1.15rem; font-weight: 600; transition: color 0.2s; }
+    .section-count { font-size: 0.75rem; color: var(--text-muted); margin-left: auto; }
+
+    .section-body { display: flex; flex-direction: column; gap: 0.5rem; }
+    .section-body.hidden { display: none; }
+
+    /* Items */
+    .item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      transition: all 0.2s;
+    }
+
+    .item:hover { border-color: #3d3555; }
+
+    .item.status-done {
+      background: var(--done-bg);
+      border-color: var(--done-border);
+    }
+    .item.status-done .item-title { text-decoration: line-through; color: var(--text-muted); }
+    .item.status-done .severity-badge { opacity: 0.4; }
+
+    .item.status-wip {
+      background: var(--wip-bg);
+      border-color: var(--wip-border);
+    }
+
+    .item-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 1rem 1.25rem;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    /* 3-state status button */
+    .status-btn {
+      width: 22px;
+      height: 22px;
+      min-width: 22px;
+      border: 2px solid var(--border);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-top: 1px;
+      font-size: 0.65rem;
+      font-weight: 700;
+      background: transparent;
+      color: transparent;
+      position: relative;
+    }
+
+    .status-btn:hover { border-color: var(--accent); transform: scale(1.1); }
+
+    .status-btn.s-wip {
+      border-color: var(--cyan);
+      background: var(--cyan-bg);
+      color: var(--cyan);
+      animation: pulse-wip 2s ease-in-out infinite;
+    }
+
+    .status-btn.s-done {
+      border-color: var(--green);
+      background: var(--green);
+      color: var(--bg);
+    }
+
+    @keyframes pulse-wip {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.3); }
+      50% { box-shadow: 0 0 0 4px rgba(34, 211, 238, 0.08); }
+    }
+
+    .item-title-row {
+      flex: 1;
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .item-title {
+      font-size: 0.92rem;
+      font-weight: 500;
+      flex: 1;
+      min-width: 200px;
+    }
+
+    .severity-badge {
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.15rem 0.55rem;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+
+    .severity-critical { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+    .severity-significant { background: var(--orange-bg); color: var(--orange); border: 1px solid var(--orange-border); }
+    .severity-moderate { background: var(--yellow-bg); color: var(--yellow); border: 1px solid var(--yellow-border); }
+    .severity-minor { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+
+    .tag {
+      font-size: 0.68rem;
+      padding: 0.12rem 0.5rem;
+      border-radius: 4px;
+      background: var(--accent-dim);
+      color: var(--accent);
+      white-space: nowrap;
+    }
+
+    .wip-badge {
+      font-size: 0.68rem;
+      padding: 0.12rem 0.5rem;
+      border-radius: 4px;
+      background: var(--cyan-bg);
+      color: var(--cyan);
+      border: 1px solid var(--cyan-border);
+      white-space: nowrap;
+      font-weight: 600;
+      animation: pulse-wip 2s ease-in-out infinite;
+    }
+
+    .item-expand-icon {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      transition: transform 0.2s;
+      margin-top: 4px;
+    }
+
+    .item.expanded .item-expand-icon { transform: rotate(90deg); }
+
+    .item-details {
+      display: none;
+      padding: 0 1.25rem 1.25rem 3.25rem;
+      font-size: 0.87rem;
+      color: var(--text-muted);
+      line-height: 1.7;
+    }
+
+    .item.expanded .item-details { display: block; }
+    .item-details strong { color: var(--text); font-weight: 600; }
+
+    .detail-section { margin-bottom: 0.75rem; }
+    .detail-section:last-child { margin-bottom: 0; }
+
+    .detail-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 0.25rem;
+    }
+
+    .files-list { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.25rem; }
+
+    .file-tag {
+      font-size: 0.72rem;
+      font-family: 'Cascadia Code', 'Fira Code', monospace;
+      padding: 0.15rem 0.5rem;
+      background: var(--blue-bg);
+      color: var(--blue);
+      border-radius: 4px;
+      border: 1px solid var(--blue-border);
+    }
+
+    /* Status legend */
+    .status-legend {
+      display: flex;
+      gap: 1.25rem;
+      margin-top: 0.75rem;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      flex-wrap: wrap;
+    }
+    .status-legend span {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .legend-dot {
+      width: 10px; height: 10px; border-radius: 3px; display: inline-block;
+    }
+    .legend-dot.todo { border: 2px solid var(--border); }
+    .legend-dot.wip { background: var(--cyan); }
+    .legend-dot.done { background: var(--green); }
+
+    /* Responsive */
+    @media (max-width: 640px) {
+      .container { padding: 1rem; }
+      header h1 { font-size: 1.35rem; }
+      .item-header { padding: 0.85rem 1rem; }
+      .item-details { padding: 0 1rem 1rem 2.75rem; }
+      .filter-row { gap: 0.35rem; }
+      .filter-btn { font-size: 0.72rem; padding: 0.25rem 0.6rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>POV Sync — UI/UX Review Checklist</h1>
+      <p>Merged feedback from Sonnet, GPT &amp; Flow reviews &bull; <span id="totalCount">0</span> items</p>
+    </header>
+
+    <div class="progress-bar-container">
+      <div class="progress-stats">
+        <span class="count"><span id="doneCount">0</span> / <span id="totalCountBar">0</span> completed</span>
+        <span class="wip-count"><span id="wipCount">0</span> in progress</span>
+        <span class="percentage" id="percentText">0%</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill-done" id="progressFillDone"></div>
+        <div class="progress-fill-wip" id="progressFillWip"></div>
+      </div>
+      <div class="filter-row">
+        <button class="filter-btn active" data-filter="all">All</button>
+        <button class="filter-btn" data-filter="todo">To Do</button>
+        <button class="filter-btn" data-filter="wip" style="color:var(--cyan)">In Progress</button>
+        <button class="filter-btn" data-filter="done">Done</button>
+        <span class="filter-divider"></span>
+        <button class="filter-btn" data-filter="critical" style="color:var(--red)">Critical</button>
+        <button class="filter-btn" data-filter="significant" style="color:var(--orange)">Significant</button>
+        <button class="filter-btn" data-filter="moderate" style="color:var(--yellow)">Moderate</button>
+        <button class="filter-btn" data-filter="minor" style="color:var(--green)">Minor</button>
+      </div>
+      <div class="status-legend">
+        <span><span class="legend-dot todo"></span> Click → In Progress</span>
+        <span><span class="legend-dot wip"></span> Click → Done</span>
+        <span><span class="legend-dot done"></span> Click → Reset</span>
+      </div>
+    </div>
+
+    <div id="sections"></div>
+  </div>
+
+  <script>
+    // ───── DATA ─────
+    const DATA = [
+      {
+        section: "Architecture & Code Organization",
+        items: [
+          {
+            id: "arch-1",
+            severity: "critical",
+            title: "Break up Viewer.jsx (~2,800 lines) into composable sub-components",
+            tags: ["Architecture", "Viewer"],
+            files: ["client/src/pages/Viewer.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>Viewer.jsx is a monolithic ~2,800-line file with 60+ state variables. Sub-components like <strong>SyncStatusPanel</strong>, <strong>OffsetControls</strong>, <strong>AddPovModal</strong>, and <strong>ParticipantBar</strong> are all defined inline. This causes real UX issues: complex conditional render chains make it hard to guarantee consistent visual states. The VOD notice, anchor-dead banner, and master controls can all appear simultaneously with no visual hierarchy separating them.</div><div class="detail-section"><div class="detail-label">Action</div>Extract each logical section into its own file under <code>client/src/components/</code>. Lift shared state into a context or a custom hook (<code>useSessionSync</code>, <code>useViewerState</code>). Each extracted component should own its own conditional rendering rather than relying on a long chain of ternaries in a parent.</div>`
+          },
+          {
+            id: "arch-2",
+            severity: "moderate",
+            title: "Deduplicate Viewer.jsx and Spectator.jsx shared layouts",
+            tags: ["Architecture", "DRY"],
+            files: ["client/src/pages/Viewer.jsx", "client/src/pages/Spectator.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The room header, filmstrip, stage/wall/cycle views, and playback controls are duplicated across two ~1,000–2,800-line files. Any UI change (e.g., changing view-mode button icons) needs to be made in two places. This directly causes visual divergence over time.</div><div class="detail-section"><div class="detail-label">Action</div>Create shared layout components: <code>SessionRoomLayout</code>, <code>ViewModeSelector</code>, <code>Filmstrip</code>. Pass role-specific props (<code>isHost</code>, <code>canControl</code>) to toggle host-only controls, rather than duplicating the entire tree.</div>`
+          },
+          {
+            id: "arch-3",
+            severity: "minor",
+            title: "Extract reusable copy-to-clipboard hook",
+            tags: ["DX", "Hooks"],
+            files: ["client/src/components/InfoPill.jsx", "client/src/pages/Viewer.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>Copy feedback ("\u2713" for 2 seconds) is managed with <code>setTimeout</code> scattered across multiple components (InfoPill, ShareLinks panel, etc.) without a reusable hook. This is a DX issue that can cause stale-closure bugs if a user rapidly copies.</div><div class="detail-section"><div class="detail-label">Action</div>Create a <code>useCopyToClipboard()</code> hook that returns <code>{ copied, copy }</code> and handles the timeout + cleanup internally. Use it everywhere copy logic appears.</div>`
+          },
+          {
+            id: "arch-4",
+            severity: "moderate",
+            title: "Simplify JoinSession.jsx conditional render chain",
+            tags: ["Architecture", "UX"],
+            files: ["client/src/pages/JoinSession.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>JoinSession.jsx has 7 different conditional render states in sequence: Loading \u2192 No code \u2192 Error \u2192 Session ended \u2192 Session full \u2192 Not logged in \u2192 Join form. These are all conditionally rendered with no animated transitions between them. If a user\u2019s state changes mid-flow (e.g., session fills up while they\u2019re typing), the UI snaps abruptly.</div><div class="detail-section"><div class="detail-label">Action</div>Consolidate states into a state machine or a single <code>status</code> variable. Add a fade/slide transition between states using <code>framer-motion</code> or CSS <code>@starting-style</code> transitions.</div>`
+          }
+        ]
+      },
+      {
+        section: "Loading, Transitions & Empty States",
+        items: [
+          {
+            id: "load-1",
+            severity: "critical",
+            title: "Add loading skeleton / transition for session room entry",
+            tags: ["UX", "Performance"],
+            files: ["client/src/pages/Viewer.jsx", "client/src/pages/Spectator.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>When navigating to <code>/session/:id</code>, there\u2019s no skeleton UI or placeholder. Users see either a blank state or a sudden full render. For a real-time sync app, this perceived latency is especially damaging to trust.</div><div class="detail-section"><div class="detail-label">Action</div>Create a <code>SessionSkeleton</code> component showing placeholder shapes for the room header, filmstrip, and stage area. Render it during the initial data fetch. Use a fade-in transition when real content arrives.</div>`
+          },
+          {
+            id: "load-2",
+            severity: "critical",
+            title: "Replace inline 404 div with a proper 404 page",
+            tags: ["UX", "Navigation"],
+            files: ["client/src/App.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The 404 fallback in App.jsx is a bare centered <code>&lt;div&gt;</code>. It has no navigation link back to home, no branding, and no visual consistency with the rest of the app.</div><div class="detail-section"><div class="detail-label">Action</div>Create a <code>NotFound.jsx</code> page component with the app\u2019s visual language, a clear \u201cPage not found\u201d message, and a prominent \u201cBack to Home\u201d button. Match the glassmorphism style of the rest of the app.</div>`
+          },
+          {
+            id: "load-3",
+            severity: "moderate",
+            title: "Improve error and empty states with actionable guidance",
+            tags: ["UX", "Polish"],
+            files: ["client/src/components/ErrorState.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>Error and empty states are functional but generic. They do the job but don\u2019t guide users with specific next steps or strong visual framing. They feel stylistically flat compared to the rest of the app.</div><div class="detail-section"><div class="detail-label">Action</div>Add contextual messaging per error type (network, not found, permission). Include specific recovery CTAs (\u201cTry again\u201d, \u201cGo home\u201d, \u201cCheck your connection\u201d). Upgrade the visual treatment to match the app\u2019s glassmorphism style with appropriate severity coloring.</div>`
+          },
+          {
+            id: "load-4",
+            severity: "moderate",
+            title: "Add animated transitions between JoinSession states",
+            tags: ["UX", "Polish"],
+            files: ["client/src/pages/JoinSession.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>JoinSession snaps abruptly between its 7 conditional states with no animation. State changes mid-flow (session fills up while typing) feel jarring.</div><div class="detail-section"><div class="detail-label">Action</div>Wrap each state in an <code>AnimatePresence</code> / <code>motion.div</code> block (or CSS transitions) so states cross-fade smoothly. Consider a brief exit animation before the entrance of a new state.</div>`
+          }
+        ]
+      },
+      {
+        section: "Navigation & Information Architecture",
+        items: [
+          {
+            id: "nav-1",
+            severity: "significant",
+            title: "Fix mobile navbar: replace \u2715 sign-out icon with explicit action",
+            tags: ["Mobile", "UX"],
+            files: ["client/src/components/Navbar.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>On mobile, \u201cSign out\u201d becomes a \u2715 icon. The \u2715 is conventionally a \u201cclose\u201d action, not a destructive account action. A user unfamiliar with the app could be confused or accidentally sign out thinking they\u2019re closing something. The Setup Guide link and display name are also hidden on mobile.</div><div class="detail-section"><div class="detail-label">Action</div>Replace \u2715 with an explicit \u201cSign out\u201d label or a recognizable logout icon (e.g., Lucide <code>LogOut</code>). Consider a mobile hamburger/drawer that preserves all nav items. Add the display name back in a condensed form.</div>`
+          },
+          {
+            id: "nav-2",
+            severity: "significant",
+            title: "Add a footer with legal / informational links",
+            tags: ["UX", "Legal"],
+            files: ["client/src/components/Footer.jsx (new)", "client/src/App.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The app has no footer \u2014 no links to terms of service, privacy policy, contact, or even a \u201cback to top.\u201d For a service with user accounts and potentially shared public sessions, the absence of any legal/informational links is notable.</div><div class="detail-section"><div class="detail-label">Action</div>Create a minimal <code>Footer</code> component with links for Terms, Privacy, Contact/Support, and a \u00a9 line. Include it on all non-session pages. On session pages, optionally hide it to preserve immersion.</div>`
+          },
+          {
+            id: "nav-3",
+            severity: "significant",
+            title: "Handle /create URL \u2014 redirect silently loses bookmarkability",
+            tags: ["UX", "Routing"],
+            files: ["client/src/pages/CreateSession.jsx", "client/src/App.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>CreateSession.jsx is literally <code>&lt;Navigate to="/" replace /&gt;</code>. If a user bookmarks <code>/create</code> or shares it, they silently land on the homepage with no explanation. The inline form expansion on Home is clever, but loses direct-link discoverability.</div><div class="detail-section"><div class="detail-label">Action</div>Either (a) make <code>/create</code> a real standalone page with the session creation form, or (b) redirect to <code>/?action=create</code> and auto-expand the create form on arrival with a brief toast explaining the redirect.</div>`
+          },
+          {
+            id: "nav-4",
+            severity: "moderate",
+            title: "Strengthen navbar active-state system and section separation",
+            tags: ["UX", "Navigation"],
+            files: ["client/src/components/Navbar.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The live-session return pill is excellent, but the rest of the nav is visually minimal compared to the complexity it supports. Users may not notice the theme toggle, setup guide, or profile entry points as clearly as the session-return action. There\u2019s no clear separation between utility actions and account/session actions.</div><div class="detail-section"><div class="detail-label">Action</div>Add a stronger active/current-page indicator. Visually group utility actions (theme, setup) separately from identity actions (profile, sign out). Consider subtle dividers or grouped backgrounds.</div>`
+          },
+          {
+            id: "nav-5",
+            severity: "moderate",
+            title: "Surface Ctrl+K shortcut and make it global",
+            tags: ["UX", "Discoverability"],
+            files: ["client/src/pages/Home.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The Ctrl+K shortcut to toggle the Join panel is implemented locally in Home.jsx. It\u2019s not surfaced to the user anywhere (no tooltip, no keyboard shortcuts overlay on the home page), making it effectively invisible. It only works on one page.</div><div class="detail-section"><div class="detail-label">Action</div>Move the Ctrl+K handler to a global level (App or a global shortcuts hook). Add a subtle \u201c\u2318K\u201d / \u201cCtrl+K\u201d hint next to the Join button. Consider adding it to the keyboard shortcuts overlay (?) if one exists globally.</div>`
+          },
+          {
+            id: "nav-6",
+            severity: "significant",
+            title: "Add active page indicator to navbar",
+            tags: ["UX", "Navigation"],
+            files: ["client/src/components/Navbar.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The navbar never highlights the current page. After navigating to <code>/profile</code> or <code>/setup</code>, there\u2019s no visual cue that you\u2019re on those pages. The only contextual awareness is the \u201cReturn to Session\u201d pill (which is session-specific, not navigation-level).</div><div class="detail-section"><div class="detail-label">Action</div>Use <code>useLocation()</code> to match the current path and apply an active class (underline, background tint, or bolder weight) to the corresponding nav item. Ensure it works for all routes including profile and setup.</div>`
+          },
+          {
+            id: "nav-7",
+            severity: "moderate",
+            title: "Add secondary navigation affordances beyond avatar and session pill",
+            tags: ["UX", "Navigation"],
+            files: ["client/src/components/Navbar.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>Outside of the logo and the session pill, there are no navigation links in the navbar for logged-in users. Getting to your profile requires knowing to click your avatar; getting to Setup requires knowing the URL or finding the link on the home page. There\u2019s no dropdown, no nav links, nothing.</div><div class="detail-section"><div class="detail-label">Action</div>Add explicit nav links or a dropdown menu for key destinations: Home, Setup Guide, Profile. Even simple text links in the navbar would drastically improve discoverability. Consider a user menu dropdown from the avatar with Profile, Settings, Setup Guide, and Sign Out.</div>`
+          }
+        ]
+      },
+      {
+        section: "Home Page & Dashboard",
+        items: [
+          {
+            id: "home-1",
+            severity: "significant",
+            title: "Reduce Home page density \u2014 add progressive disclosure",
+            tags: ["UX", "Layout"],
+            files: ["client/src/pages/Home.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The dashboard has: action cards, \u201cDiscover People\u201d search, \u201cFollowing\u201d list, \u201cFollowing Live Now\u201d, \u201cFollowing VODs\u201d, \u201cYour Live Sessions\u201d, and \u201cRecent Sessions\u201d \u2014 all on one scrollable page with no tabs, sections, or progressive disclosure. For a new user with no data, most sections show empty states simultaneously (barren). For an active user, it\u2019s overwhelming.</div><div class="detail-section"><div class="detail-label">Action</div>Make one action dominant (Create or Join). Use tabs or collapsible sections to organize: \u201cMy Sessions\u201d / \u201cFollowing\u201d / \u201cDiscover\u201d. Show contextual empty states only when relevant. Compress secondary sections and use stronger visual separation.</div>`
+          },
+          {
+            id: "home-2",
+            severity: "significant",
+            title: "Make the primary CTA visually dominant",
+            tags: ["UX", "Visual Hierarchy"],
+            files: ["client/src/pages/Home.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The landing page communicates capability but doesn\u2019t have a strong \u201cone action, one path\u201d flow. The main CTA and the next logical action don\u2019t pop enough against all the surrounding content. Multiple equally-weighted cards dilute the user\u2019s focus.</div><div class="detail-section"><div class="detail-label">Action</div>Increase size, contrast, and whitespace around the primary CTA (likely \u201cCreate Session\u201d or \u201cJoin Session\u201d). Reduce visual weight of secondary feature blocks. Ensure the CTA is visible without scrolling on most viewports.</div>`
+          },
+          {
+            id: "home-3",
+            severity: "significant",
+            title: "Reorder dashboard sections \u2014 personal sessions first, social second",
+            tags: ["UX", "Information Architecture"],
+            files: ["client/src/pages/Home.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The sections appear as: Action cards \u2192 Discover People / Following \u2192 Following Live \u2192 Following VODs \u2192 Your Live Sessions \u2192 Recent Sessions. Your own sessions are at the bottom, below the social feed. Most users open the dashboard to find their own activity, not to browse who they follow.</div><div class="detail-section"><div class="detail-label">Action</div>Reorder to: Action cards \u2192 Your Live Sessions \u2192 Recent Sessions \u2192 Following Live Now \u2192 Following VODs \u2192 Discover People / Following. The user\u2019s own content should always be the first thing they see after the action area.</div>`
+          },
+          {
+            id: "home-4",
+            severity: "moderate",
+            title: "Hide or collapse empty Discover People / Following panels",
+            tags: ["UX", "Empty States"],
+            files: ["client/src/pages/Home.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>On first use, both \u201cDiscover People\u201d and \u201cFollowing\u201d panels render as large empty boxes above the actual session content. They take up valuable viewport space showing nothing, pushing real content down.</div><div class="detail-section"><div class="detail-label">Action</div>Collapse or hide these panels when the user has no follows. Show a subtle \u201cFind people to follow\u201d link or inline prompt instead of two full empty panels. Only expand them when the user has follow data to display.</div>`
+          },
+          {
+            id: "home-5",
+            severity: "moderate",
+            title: "Keep Get Started empty state visible when Create/Join panel is open",
+            tags: ["UX", "Onboarding"],
+            files: ["client/src/pages/Home.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>When you have no sessions, a nice \u201cGet started\u201d empty state with feature highlights appears \u2014 but it disappears if the Create or Join panel is open. The user goes from a helpful landing state to a completely blank area below the action cards with no guidance.</div><div class="detail-section"><div class="detail-label">Action</div>Keep the empty-state guidance visible (or at least partially visible) even when a panel is expanded. Alternatively, incorporate the key onboarding hints directly into the Create/Join panels so the guidance moves with the user\u2019s attention.</div>`
+          }
+        ]
+      },
+      {
+        section: "Join Session Flow",
+        items: [
+          {
+            id: "join-1",
+            severity: "significant",
+            title: "Add consistent supplementary context across all JoinSession branches",
+            tags: ["UX", "Consistency"],
+            files: ["client/src/pages/JoinSession.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The \u201cHelpful reminders\u201d right panel and SessionResumeCard both appear in Branch 2 (no code) and Branch 7 (main join form) but nowhere else. Branches 3\u20135 (error, ended, full) drop the user into a full-page ErrorState with no supplementary context. A user who arrived with a broken link gets less information than a user with no link at all.</div><div class="detail-section"><div class="detail-label">Action</div>Wrap all branches in a consistent two-column layout. Show the helpful context panel in all states, adapted to the current state (e.g., \u201cThis session has ended \u2014 here\u2019s how to start your own\u201d instead of just \u201cSession ended\u201d). Never drop to a bare error page with less context than the happy path.</div>`
+          },
+          {
+            id: "join-2",
+            severity: "moderate",
+            title: "Show join form before or beside participant list, not after",
+            tags: ["UX", "Layout"],
+            files: ["client/src/pages/JoinSession.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>In Branch 7, who\u2019s already in the room is shown above the join form. It makes more sense to let the user fill in their name and stream first, then confirm by seeing who\u2019s in the room \u2014 or show them side by side rather than stacked.</div><div class="detail-section"><div class="detail-label">Action</div>Rearrange to: join form (name, stream URL) on top or left, participant list on bottom or right. The primary action (joining) should be the first thing the user interacts with, not scrolled-to after a roster.</div>`
+          }
+        ]
+      },
+      {
+        section: "Profile Page",
+        items: [
+          {
+            id: "prof-1",
+            severity: "moderate",
+            title: "Simplify Profile page \u2014 elevate identity, reduce data density",
+            tags: ["UX", "Layout"],
+            files: ["client/src/pages/Profile.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The profile page tries to show identity, social graph, status, and session history all at once. It should feel like a destination, not a data dump. The stat cluster and tab state could be more visually decisive.</div><div class="detail-section"><div class="detail-label">Action</div>Elevate the identity section (avatar, name, bio) with more whitespace and prominence. Simplify the stat cluster to 2\u20133 key numbers. Make the active tab state feel more visually decisive with a stronger indicator or background change.</div>`
+          },
+          {
+            id: "prof-2",
+            severity: "significant",
+            title: "Move \u2018Currently Live\u2019 banner above the network cards",
+            tags: ["UX", "Information Architecture"],
+            files: ["client/src/pages/Profile.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The single most urgent piece of information on someone\u2019s profile \u2014 that they\u2019re live right now \u2014 appears after the network section (followers/following cards). The banner should be the first thing after the profile header, since it directly drives the core action (\u201cWatch live\u201d).</div><div class="detail-section"><div class="detail-label">Action</div>Move the \u201cCurrently Live\u201d banner to directly below the profile header card, above all other content. Make it visually prominent with a pulsing indicator or accent background. Same treatment for the \u201cLatest VOD\u201d spotlight \u2014 move it adjacent to the live banner.</div>`
+          },
+          {
+            id: "prof-3",
+            severity: "moderate",
+            title: "Unify desktop/mobile stats layout \u2014 fix missing \u2018Live\u2019 stat on mobile",
+            tags: ["Mobile", "Consistency"],
+            files: ["client/src/pages/Profile.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>Desktop shows stats as pills in the header; mobile shows a <code>grid-cols-2</code> stats card section below the header. The mobile version doesn\u2019t include the \u201cLive\u201d stat that the desktop version has. These two layouts are separate DOM elements toggled by breakpoint, creating fragmented information hierarchy.</div><div class="detail-section"><div class="detail-label">Action</div>Use a single responsive stats component rather than two separate DOM trees. Ensure all stats (including \u201cLive\u201d) appear on both layouts. Use CSS-only responsive changes (flex-wrap, font-size) rather than separate markup.</div>`
+          },
+          {
+            id: "prof-4",
+            severity: "moderate",
+            title: "Collapse empty profile sections for new users",
+            tags: ["UX", "Empty States"],
+            files: ["client/src/pages/Profile.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>A new user sees: header \u2192 network cards \u2192 empty live banner \u2192 empty VOD spotlight \u2192 tab bar \u2192 empty grid with a placeholder. That\u2019s five visual sections of emptiness before reaching the helpful \u201cno sessions yet\u201d message.</div><div class="detail-section"><div class="detail-label">Action</div>Hide or collapse sections that have no data (empty live banner, empty VOD spotlight, empty network cards). Show a single consolidated \u201cGet started\u201d message instead of multiple empty placeholders. Only render sections when they have content to display.</div>`
+          }
+        ]
+      },
+      {
+        section: "Session Room \u2014 Viewer (Host)",
+        items: [
+          {
+            id: "room-1",
+            severity: "significant",
+            title: "Add progressive disclosure \u2014 hide advanced controls by default",
+            tags: ["UX", "Complexity"],
+            files: ["client/src/pages/Viewer.jsx", "client/src/pages/Spectator.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>Session controls feel exposed too early. A lot of sync and playback concepts appear before the user needs them: stage modes, controls, anchor states, offsets, delegation, session links, and responsive variants. Good for power users, but it hurts first-time comprehension and makes the interface feel heavy.</div><div class="detail-section"><div class="detail-label">Action</div>Implement a \u201csimple mode\u201d as the default \u2014 show only the stream stage, basic playback, and view mode toggle. Put advanced controls (offset buttons, sync stats, delegation, anchor management) behind an expandable \u201cAdvanced\u201d drawer or a gear icon. For spectators, reduce control-like visual weight even further.</div>`
+          },
+          {
+            id: "room-2",
+            severity: "moderate",
+            title: "Add visible label, value, and unit to the Scale slider",
+            tags: ["UX", "Clarity"],
+            files: ["client/src/components/SessionRoomHeader.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The room header\u2019s Scale slider controls <code>roomTileWidth</code> (180\u2013840px), but the slider itself shows no current value, no unit, and no min/max labels. Users have no idea what they\u2019re scaling or what a given position means.</div><div class="detail-section"><div class="detail-label">Action</div>Add a label (\u201cTile Size\u201d), display the current value (e.g., \u201c420px\u201d or \u201cMedium\u201d), and optionally show min/max markers. Consider named presets (\u201cSmall / Medium / Large\u201d) as an alternative to a raw slider.</div>`
+          },
+          {
+            id: "room-3",
+            severity: "moderate",
+            title: "Shorten SessionRoomHeader descriptive copy",
+            tags: ["UX", "Clarity"],
+            files: ["client/src/components/SessionRoomHeader.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The session room header may be doing too much explanatory work in a compact space. Too much text makes it feel like documentation rather than a quick orientation tool.</div><div class="detail-section"><div class="detail-label">Action</div>Shorten the descriptive copy to essential-only. Make the state chips more decisive and visually prominent. Move detailed explanations into tooltips or a help popover.</div>`
+          },
+          {
+            id: "room-4",
+            severity: "moderate",
+            title: "Improve PlaybackControls layout on mobile",
+            tags: ["Mobile", "UX"],
+            files: ["client/src/components/PlaybackControls.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The offset step buttons (\u22125s / \u22121s / +1s / +5s) go from a flex row to a <code>grid-cols-2</code> on mobile. The result is a 2\u00d72 button grid with no clear directionality \u2014 users have to read each label rather than relying on left/right spatial positioning.</div><div class="detail-section"><div class="detail-label">Action</div>Keep the buttons in a single horizontal row on mobile, even if smaller. Use directional arrows instead of (or alongside) text labels. Collapse less-used offset increments by default and surface the most common ones prominently.</div>`
+          },
+          {
+            id: "room-5",
+            severity: "moderate",
+            title: "Make SessionResumeCard visually distinct from generic cards",
+            tags: ["UX", "Visual Hierarchy"],
+            files: ["client/src/components/SessionResumeCard.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>SessionResumeCard adds another card style into an already card-heavy system. When many cards look similar, importance gets diluted. This card represents a high-value shortcut but doesn\u2019t stand out.</div><div class="detail-section"><div class="detail-label">Action</div>Give it a distinct visual treatment: a colored left border, a subtle glow, or a different background tint. Make it clearly scannable as \u201cyou were here, pick up where you left off\u201d rather than another summary tile.</div>`
+          },
+          {
+            id: "room-6",
+            severity: "significant",
+            title: "Reorder controls: Master Controls above PlaybackControls and SyncStatusPanel",
+            tags: ["UX", "Information Architecture"],
+            files: ["client/src/pages/Viewer.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The most important host action surface (Play All / Pause All / Go Live / Re-sync) is rendered after the personal PlaybackControls nudge panel and the Sync Status Panel. The current DOM order is: filmstrip \u2192 Sync Status Panel \u2192 PlaybackControls \u2192 VOD notice \u2192 Anchor dead banner \u2192 Master Controls. A host\u2019s primary job is room-wide control \u2014 those should be at the top.</div><div class="detail-section"><div class="detail-label">Action</div>Reorder to: filmstrip \u2192 Master Controls \u2192 PlaybackControls \u2192 VOD notice / Anchor dead banner \u2192 Sync Status Panel (collapsed by default as a diagnostic tool). The most-used surface should be the first thing below the filmstrip.</div>`
+          },
+          {
+            id: "room-7",
+            severity: "moderate",
+            title: "Show delegation state persistently outside the collapsible header",
+            tags: ["UX", "Visibility"],
+            files: ["client/src/pages/Viewer.jsx", "client/src/components/SessionRoomHeader.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The \u201cDelegated control\u201d badge \u2014 the only indicator that a participant now has host-level powers \u2014 is inside the room header panel. If that panel is collapsed (which users commonly do to maximise video space), there\u2019s no persistent indicator of the current control state visible anywhere else on the page.</div><div class="detail-section"><div class="detail-label">Action</div>Add a persistent, always-visible delegation indicator outside the collapsible header \u2014 e.g., a small pill in the filmstrip area, in the Master Controls bar, or as a floating badge. It should be visible regardless of header collapse state.</div>`
+          },
+          {
+            id: "room-8",
+            severity: "minor",
+            title: "Move \u2018Add POV\u2019 out of the filmstrip into a dedicated button",
+            tags: ["UX", "Clarity"],
+            files: ["client/src/pages/Viewer.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The \u201cAdd POV\u201d tile in the filmstrip uses the same size/shape as real stream tiles. Adding a POV is an infrequent host action, but its card lives in the same filmstrip grid as the actual stream thumbnails. A new host might click it accidentally while trying to navigate to a stream.</div><div class="detail-section"><div class="detail-label">Action</div>Move the \u201cAdd POV\u201d action to a dedicated button in the room header or toolbar (e.g., a \u201c+\u201d button with label). Keep it visually distinct from stream tiles. This separates the \u201cmanage streams\u201d action from the \u201cselect stream\u201d interaction.</div>`
+          }
+        ]
+      },
+      {
+        section: "Session Room \u2014 Spectator",
+        items: [
+          {
+            id: "spec-1",
+            severity: "significant",
+            title: "Move PlaybackControls below the video stage, not above",
+            tags: ["UX", "Layout"],
+            files: ["client/src/pages/Spectator.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The PlaybackControls component renders above the main stage/wall/cycle video area. A viewer expects controls to be below the content they\u2019re controlling. Placing them above means the user must scroll up from the video to adjust playback rather than down.</div><div class="detail-section"><div class="detail-label">Action</div>Move PlaybackControls to render after the main video stage area. Follow the universal media player convention: content on top, controls below. This matches YouTube, Twitch, and every major video player layout.</div>`
+          },
+          {
+            id: "spec-2",
+            severity: "moderate",
+            title: "Reserve space for live sync status bar to prevent layout shift",
+            tags: ["UX", "Performance"],
+            files: ["client/src/pages/Spectator.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>When WebSocket data hasn\u2019t loaded yet, the sync bar doesn\u2019t exist. When it loads, it pushes the video content down the page. This is a jarring layout shift \u2014 the video jumps downward after load without any reserved space.</div><div class="detail-section"><div class="detail-label">Action</div>Reserve a fixed-height slot for the sync status bar from initial render (even if empty/skeleton). Use a <code>min-height</code> or a skeleton placeholder so the video area doesn\u2019t shift when the bar appears. Alternatively, overlay the sync bar on top of existing content so it doesn\u2019t affect layout flow.</div>`
+          }
+        ]
+      },
+      {
+        section: "Setup & Onboarding",
+        items: [
+          {
+            id: "setup-1",
+            severity: "moderate",
+            title: "Make Setup page more scannable with progressive disclosure",
+            tags: ["UX", "Readability"],
+            files: ["client/src/pages/Setup.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>Setup content is likely dense and instruction-heavy. Users may need this page at the exact moment they\u2019re already uncertain, so readability matters a lot. Equally weighted text blocks become visually tiring.</div><div class="detail-section"><div class="detail-label">Action</div>Break content into more scannable chunks with stronger step markers (numbered circles, progress indicator). Use accordion sections for detailed sub-steps. Add more visual breathing room. Consider an interactive walkthrough as an alternative.</div>`
+          },
+          {
+            id: "setup-2",
+            severity: "moderate",
+            title: "Fix Twitch setup section \u2014 separate from YouTube, fix step numbering",
+            tags: ["UX", "Content"],
+            files: ["client/src/pages/Setup.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The Table of Contents lists \u201cTwitch Live Setup\u201d as its own entry (linking to <code>#twitch</code>), but in the rendered page it\u2019s a subsection inside the YouTube section, with the same step number. The step counter badge and the ToC numbering are inconsistent \u2014 a user following the guide by step number will be confused when step 3 (\u201cTwitch\u201d) visually lives inside step 2 (\u201cYouTube\u201d).</div><div class="detail-section"><div class="detail-label">Action</div>Make Twitch setup a top-level section with its own step number. Ensure the ToC entries and the step badges are consistent. Each platform should have its own clearly delineated section with matching navigation.</div>`
+          },
+          {
+            id: "setup-3",
+            severity: "minor",
+            title: "Move Quick Start below the Table of Contents",
+            tags: ["UX", "Information Architecture"],
+            files: ["client/src/pages/Setup.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The Quick Start box is a 5-step summary designed for users who already know what they\u2019re doing. It appears before the Table of Contents. New users who need the guide will skip past it to find the ToC.</div><div class="detail-section"><div class="detail-label">Action</div>Reorder to: brief intro \u2192 Table of Contents \u2192 Quick Start (as an optional \u201calready know what you\u2019re doing?\u201d collapsed block) \u2192 full guide. This lets new users find the ToC immediately and lets returning users collapse/expand the quick reference.</div>`
+          }
+        ]
+      },
+      {
+        section: "Cross-Page Journey Gaps",
+        items: [
+          {
+            id: "journey-1",
+            severity: "significant",
+            title: "Add \u2018Room Ready\u2019 confirmation step after creating a session",
+            tags: ["UX", "Onboarding"],
+            files: ["client/src/pages/Home.jsx", "client/src/pages/Viewer.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>No confirmation or summary step after creating a session \u2014 clicking \u201cGo Live\u201d on the home page goes straight into the live room. There\u2019s no moment for the host to see the share link prominently, copy it, and prepare before participants arrive.</div><div class="detail-section"><div class="detail-label">Action</div>Add a brief interstitial or modal: \u201cYour room is ready!\u201d with the session code and share link prominently displayed, a copy button, and a \u201cEnter Room\u201d CTA. This gives hosts a moment to distribute the link before the session starts.</div>`
+          },
+          {
+            id: "journey-2",
+            severity: "significant",
+            title: "Add Spectator \u2192 Join CTA on the spectator page",
+            tags: ["UX", "Conversion"],
+            files: ["client/src/pages/Spectator.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>If a spectator watching <code>/watch/:code</code> wants to actually join as a participant, there\u2019s no CTA anywhere on the spectator page to do that. They\u2019d need to manually navigate to <code>/join/:code</code>.</div><div class="detail-section"><div class="detail-label">Action</div>Add a visible \u201cJoin as Participant\u201d button or banner on the spectator page. Link it to <code>/join/:code</code> with the session code pre-filled. Position it in the header or as a floating action so it doesn\u2019t interfere with viewing but is always discoverable.</div>`
+          },
+          {
+            id: "journey-3",
+            severity: "significant",
+            title: "Add \u2018Session Ended\u2019 redirect / landing for participants",
+            tags: ["UX", "Session Lifecycle"],
+            files: ["client/src/pages/Viewer.jsx", "client/src/pages/Spectator.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>After a session ends, participants land nowhere \u2014 when the host ends a session, participants are presumably disconnected, but there\u2019s no page or redirect that says \u201csession ended, here\u2019s the VOD.\u201d They\u2019re left on a stale <code>/session/:id</code> page.</div><div class="detail-section"><div class="detail-label">Action</div>When a session ends, redirect participants to a \u201cSession Ended\u201d page or overlay showing: a summary of the session, a link to the VOD (if available), a \u201cReturn Home\u201d button, and optionally a \u201cFollow Host\u201d CTA. Handle both graceful end (host ends) and ungraceful end (disconnect) scenarios.</div>`
+          }
+        ]
+      },
+      {
+        section: "Visual Design & Hierarchy",
+        items: [
+          {
+            id: "vis-1",
+            severity: "significant",
+            title: "Break up the uniform card style \u2014 vary surfaces by purpose",
+            tags: ["Visual Design", "Hierarchy"],
+            files: ["client/src/index.css", "client/src/globals.css"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The UI leans too hard on the same card style everywhere: same rounded border, muted surface, and accent-chip language across nearly every surface. This creates consistency but also sameness \u2014 sections blur together instead of feeling distinct by purpose.</div><div class="detail-section"><div class="detail-label">Action</div>Introduce more deliberate contrast between primary surfaces, secondary surfaces, and action surfaces. Use elevated/depressed treatments, different border radii, or subtle color shifts to distinguish: interactive cards vs. info panels vs. action buttons.</div>`
+          },
+          {
+            id: "vis-2",
+            severity: "significant",
+            title: "Increase visual contrast for active/selected states",
+            tags: ["Visual Design", "Interaction"],
+            files: ["client/src/globals.css", "client/src/components/StreamPreviewCard.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>Current selection and key tasks don\u2019t pop hard enough. StreamPreviewCard treats all cards similarly, even when some are secondary. The active/inactive contrast isn\u2019t strong enough for fast scanning.</div><div class="detail-section"><div class="detail-label">Action</div>Push a stronger active/inactive contrast on StreamPreviewCard (dim non-active cards, ring or glow on active). Make FollowButton use outlined/ghost style for \u201cFollowing\u201d and filled style for \u201cFollow\u201d. Audit all toggle/selection states for clear visual differentiation.</div>`
+          },
+          {
+            id: "vis-3",
+            severity: "moderate",
+            title: "Audit light theme for contrast issues",
+            tags: ["Accessibility", "Visual Design"],
+            files: ["client/src/globals.css"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The light theme uses warm lavender tints (#e2ddea bg, #f4edfa surfaces), and the text color is <code>rgb(66 60 85)</code>. The glassmorphism effects that look great in dark mode may produce low-contrast text-on-surface combinations in light mode.</div><div class="detail-section"><div class="detail-label">Action</div>Run all light-theme surface/text combos through a WCAG contrast checker. Ensure a minimum 4.5:1 ratio for body text and 3:1 for large text. Adjust tints or text colors where needed. Test glassmorphism overlays specifically.</div>`
+          },
+          {
+            id: "vis-4",
+            severity: "minor",
+            title: "Fix animate-in-stagger for overflow items",
+            tags: ["Polish", "CSS"],
+            files: ["client/src/globals.css"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The stagger animation uses hardcoded animation-delay values up to some count. If a grid has more items than the CSS accounts for, the overflow items appear instantly with no animation.</div><div class="detail-section"><div class="detail-label">Action</div>Switch to a JS-driven stagger (e.g., inline style with computed delay) or use CSS <code>calc()</code> with a custom property. This ensures any number of items gets the stagger effect.</div>`
+          }
+        ]
+      },
+      {
+        section: "Cards, Thumbnails & Previews",
+        items: [
+          {
+            id: "card-1",
+            severity: "moderate",
+            title: "Add Twitch thumbnail / channel image fallback in StreamPreviewCard",
+            tags: ["Visual Consistency", "Twitch"],
+            files: ["client/src/components/StreamPreviewCard.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>YouTube cards use <code>YouTubeThumbnail</code> with a real image. Twitch streams get a bg-gradient placeholder with no channel image or thumbnail preview at all. This creates an inconsistent card grid.</div><div class="detail-section"><div class="detail-label">Action</div>Use the Twitch API\u2019s thumbnail URL template or at minimum the channel\u2019s profile image. Add an <code>onError</code> fallback to a styled placeholder with the channel name.</div>`
+          },
+          {
+            id: "card-2",
+            severity: "minor",
+            title: "Add onError fallback for YouTubeThumbnail maxresdefault",
+            tags: ["Robustness", "Images"],
+            files: ["client/src/components/YouTubeThumbnail.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div><code>maxresdefault</code> thumbnails don\u2019t exist for all YouTube videos and will 404, showing a broken image. There\u2019s no <code>onError</code> fallback on the <code>&lt;img&gt;</code> tag.</div><div class="detail-section"><div class="detail-label">Action</div>Add an <code>onError</code> handler that falls back to <code>hqdefault</code>, then to a styled placeholder. Consider pre-checking with <code>hqdefault</code> as the default.</div>`
+          },
+          {
+            id: "card-3",
+            severity: "significant",
+            title: "Add stronger hierarchy across all card types",
+            tags: ["Visual Hierarchy", "Layout"],
+            files: ["client/src/pages/Home.jsx", "client/src/components/StreamPreviewCard.jsx", "client/src/components/SessionResumeCard.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>Not every panel should feel equally important. The product often presents several equally weighted cards and panels, which flattens the experience.</div><div class="detail-section"><div class="detail-label">Action</div>Define 2\u20133 card \u201ctiers\u201d in the design system: primary (high contrast, larger, more prominent), secondary (standard surface), and tertiary (muted, smaller). Apply them consistently based on the action importance of each card.</div>`
+          }
+        ]
+      },
+      {
+        section: "Accessibility & Semantics",
+        items: [
+          {
+            id: "a11y-1",
+            severity: "moderate",
+            title: "Replace emoji status icons with a proper icon library",
+            tags: ["Accessibility", "Consistency"],
+            files: ["client/src/pages/Viewer.jsx", "client/src/pages/Spectator.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>\ud83d\udfe3, \ud83d\udfe2, \u2693, \ud83d\udcfc, \ud83d\udecb\ufe0f, \ud83d\udca1, \u26a0\ufe0f, \ud83d\udc8e are used as UI icons extensively. Emoji rendering is inconsistent across OSes, and screen readers announce them literally.</div><div class="detail-section"><div class="detail-label">Action</div>Replace all functional emoji with SVG icons from a library (Lucide, Heroicons, Phosphor). Use <code>aria-hidden="true"</code> on decorative icons and <code>aria-label</code> on semantic ones.</div>`
+          },
+          {
+            id: "a11y-2",
+            severity: "moderate",
+            title: "Fix ConfirmModal \u2014 focus the Cancel button instead of Confirm",
+            tags: ["Accessibility", "UX"],
+            files: ["client/src/components/ConfirmModal.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>ConfirmModal auto-focuses the confirm (destructive) button on open. Best practice for destructive actions is to focus the cancel button to prevent accidental confirmation.</div><div class="detail-section"><div class="detail-label">Action</div>Change the default focus to the cancel/dismiss button using <code>autoFocus</code> or a <code>useEffect</code> ref focus. Ensure tab order goes Cancel \u2192 Confirm. Add a trap focus loop within the modal.</div>`
+          },
+          {
+            id: "a11y-3",
+            severity: "moderate",
+            title: "Fix heading hierarchy in session room pages",
+            tags: ["Accessibility", "Semantics"],
+            files: ["client/src/pages/Viewer.jsx", "client/src/pages/Spectator.jsx", "client/src/components/SessionRoomHeader.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>In both Viewer and Spectator, the session title is the only <code>&lt;h1&gt;</code>. Sub-panels have no headings at all \u2014 just bold text. This makes the page structure flat for screen readers.</div><div class="detail-section"><div class="detail-label">Action</div>Add <code>&lt;h2&gt;</code> headings to major panel sections (Sync Status, Playback Controls, Participants). Use <code>&lt;h3&gt;</code> for sub-sections. Visually style them to match the current bold text while being semantically correct.</div>`
+          },
+          {
+            id: "a11y-4",
+            severity: "minor",
+            title: "FollowButton needs distinct visual state for \u2018already following\u2019",
+            tags: ["Accessibility", "Visual Feedback"],
+            files: ["client/src/components/FollowButton.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The button just says \u201cFollowing\u201d vs. \u201cFollow\u201d \u2014 same styling. A more distinct visual treatment would make the followed state more scannable.</div><div class="detail-section"><div class="detail-label">Action</div>Use filled/solid style for \u201cFollow\u201d (call-to-action) and outlined/ghost style for \u201cFollowing\u201d (already actioned). Add a hover state that changes \u201cFollowing\u201d to \u201cUnfollow\u201d with a red tint. Include <code>aria-pressed</code> attribute for screen readers.</div>`
+          }
+        ]
+      },
+      {
+        section: "Mobile & Responsive",
+        items: [
+          {
+            id: "mob-1",
+            severity: "significant",
+            title: "Improve mobile readability \u2014 reduce truncation and tiny chips",
+            tags: ["Mobile", "UX"],
+            files: ["client/src/pages/Viewer.jsx", "client/src/pages/Spectator.jsx", "client/src/components/PlaybackControls.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>Several components rely on compact chips, truncated labels, and stacked controls on mobile. That keeps things fitting, but makes the UI feel cryptic instead of streamlined.</div><div class="detail-section"><div class="detail-label">Action</div>Audit all mobile breakpoints. Replace truncated labels with full labels in a smaller font size where possible. Use icon-only buttons with tooltips instead of truncated text. Ensure tap targets are at least 44\u00d744px. Group related controls more explicitly.</div>`
+          },
+          {
+            id: "mob-2",
+            severity: "moderate",
+            title: "Ensure mobile JoinSession page is inviting and clear",
+            tags: ["Mobile", "UX"],
+            files: ["client/src/pages/JoinSession.jsx"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div>The Join page is functional but not especially inviting on mobile. Joining a session is a high-friction moment; the UI should reduce doubt and make the next step feel obvious.</div><div class="detail-section"><div class="detail-label">Action</div>Increase the visual contrast between the form and the help content. Tighten the copy so the primary path is unmistakable. Make the \u201cJoin\u201d button larger and more prominent on mobile. Reduce surrounding visual noise.</div>`
+          }
+        ]
+      },
+      {
+        section: "Meta, SEO & Infrastructure",
+        items: [
+          {
+            id: "meta-1",
+            severity: "moderate",
+            title: "Add meta description, OG tags, and favicon",
+            tags: ["SEO", "Sharing"],
+            files: ["client/index.html"],
+            details: `<div class="detail-section"><div class="detail-label">Problem</div><code>index.html</code> had no <code>&lt;meta name="description"&gt;</code>, no Open Graph tags, and no favicon. Sharing a session link on social media rendered a blank preview card.</div><div class="detail-section"><div class="detail-label">Action</div>Add: <code>&lt;meta name="description"&gt;</code> with a concise product summary. OG tags (<code>og:title</code>, <code>og:description</code>, <code>og:image</code>, <code>og:url</code>). Twitter card tags. A proper favicon (SVG preferred for modern browsers, with PNG fallback). Consider per-session dynamic OG tags if sessions are shareable publicly.</div>`
+          }
+        ]
+      }
+    ];
+
+    // ───── STATE ─────
+    const STORAGE_KEY = "pov-sync-review-checklist-v2";
+    let itemStatuses = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+
+    // Migrate from v1 if needed
+    const V1_KEY = "pov-sync-review-checklist";
+    const v1Data = JSON.parse(localStorage.getItem(V1_KEY) || "{}");
+    if (Object.keys(v1Data).length && !Object.keys(itemStatuses).length) {
+      for (const [id, val] of Object.entries(v1Data)) {
+        if (val) itemStatuses[id] = "done";
+      }
+      save();
+      localStorage.removeItem(V1_KEY);
+    }
+
+    let currentFilter = "all";
+    let collapsedSections = {};
+
+    function getStatus(id) { return itemStatuses[id] || "todo"; }
+
+    function cycleStatus(id) {
+      const cur = getStatus(id);
+      if (cur === "todo") itemStatuses[id] = "wip";
+      else if (cur === "wip") itemStatuses[id] = "done";
+      else delete itemStatuses[id];
+      save();
+    }
+
+    function save() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(itemStatuses));
+    }
+
+    // ───── RENDER ─────
+    const sectionsEl = document.getElementById("sections");
+
+    function getAllItems() { return DATA.flatMap(s => s.items); }
+
+    function shouldShowItem(item) {
+      const s = getStatus(item.id);
+      if (currentFilter === "todo") return s === "todo";
+      if (currentFilter === "wip") return s === "wip";
+      if (currentFilter === "done") return s === "done";
+      if (["critical","significant","moderate","minor"].includes(currentFilter)) return item.severity === currentFilter;
+      return true;
+    }
+
+    function render() {
+      const allItems = getAllItems();
+      const total = allItems.length;
+      const doneCount = allItems.filter(i => getStatus(i.id) === "done").length;
+      const wipCount = allItems.filter(i => getStatus(i.id) === "wip").length;
+
+      document.getElementById("totalCount").textContent = total;
+      document.getElementById("totalCountBar").textContent = total;
+      document.getElementById("doneCount").textContent = doneCount;
+      document.getElementById("wipCount").textContent = wipCount;
+      document.getElementById("percentText").textContent = Math.round((doneCount / total) * 100) + "%";
+      document.getElementById("progressFillDone").style.width = ((doneCount / total) * 100) + "%";
+      document.getElementById("progressFillWip").style.width = ((wipCount / total) * 100) + "%";
+
+      sectionsEl.innerHTML = "";
+
+      DATA.forEach((section, si) => {
+        const visibleItems = section.items.filter(shouldShowItem);
+        if (visibleItems.length === 0) return;
+
+        const sectionDone = section.items.filter(i => getStatus(i.id) === "done").length;
+        const sectionWip = section.items.filter(i => getStatus(i.id) === "wip").length;
+        const isCollapsed = collapsedSections[si];
+
+        const sectionEl = document.createElement("div");
+        sectionEl.className = "section";
+
+        const headerEl = document.createElement("div");
+        headerEl.className = "section-header" + (isCollapsed ? " collapsed" : "");
+
+        let countLabel = `${sectionDone}/${section.items.length}`;
+        if (sectionWip > 0) countLabel += ` \u00b7 ${sectionWip} wip`;
+
+        headerEl.innerHTML = `
+          <span class="section-chevron">\u25bc</span>
+          <span class="section-title">${section.section}</span>
+          <span class="section-count">${countLabel}</span>
+        `;
+        headerEl.onclick = () => { collapsedSections[si] = !collapsedSections[si]; render(); };
+        sectionEl.appendChild(headerEl);
+
+        const bodyEl = document.createElement("div");
+        bodyEl.className = "section-body" + (isCollapsed ? " hidden" : "");
+
+        visibleItems.forEach(item => {
+          const status = getStatus(item.id);
+          const itemEl = document.createElement("div");
+          itemEl.className = "item" + (status === "done" ? " status-done" : status === "wip" ? " status-wip" : "");
+          itemEl.dataset.id = item.id;
+
+          const btnClass = status === "done" ? "s-done" : status === "wip" ? "s-wip" : "";
+          const btnContent = status === "done" ? "\u2713" : status === "wip" ? "\u25c9" : "";
+          const wipBadge = status === "wip" ? '<span class="wip-badge">IN PROGRESS</span>' : '';
+
+          itemEl.innerHTML = `
+            <div class="item-header">
+              <div class="status-btn ${btnClass}" data-status="${item.id}" title="Click to cycle: To Do \u2192 In Progress \u2192 Done">${btnContent}</div>
+              <div class="item-title-row">
+                <span class="item-title">${item.title}</span>
+                ${wipBadge}
+                <span class="severity-badge severity-${item.severity}">${item.severity}</span>
+                ${item.tags.map(t => `<span class="tag">${t}</span>`).join("")}
+              </div>
+              <span class="item-expand-icon">\u25b6</span>
+            </div>
+            <div class="item-details">
+              ${item.details}
+              <div class="detail-section">
+                <div class="detail-label">Files</div>
+                <div class="files-list">
+                  ${item.files.map(f => `<span class="file-tag">${f}</span>`).join("")}
+                </div>
+              </div>
+            </div>
+          `;
+
+          itemEl.querySelector(".status-btn").addEventListener("click", (e) => {
+            e.stopPropagation();
+            cycleStatus(item.id);
+            render();
+          });
+
+          itemEl.querySelector(".item-header").addEventListener("click", (e) => {
+            if (e.target.closest(".status-btn")) return;
+            itemEl.classList.toggle("expanded");
+          });
+
+          bodyEl.appendChild(itemEl);
+        });
+
+        sectionEl.appendChild(bodyEl);
+        sectionsEl.appendChild(sectionEl);
+      });
+    }
+
+    // ───── FILTERS ─────
+    document.querySelectorAll(".filter-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        currentFilter = btn.dataset.filter;
+        render();
+      });
+    });
+
+    // ───── INIT ─────
+    render();
+  </script>
+</body>
+</html>

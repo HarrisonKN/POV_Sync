@@ -9,6 +9,7 @@ import ErrorState from '../components/ErrorState';
 import ConfirmModal from '../components/ConfirmModal';
 import PlaybackControls from '../components/PlaybackControls';
 import { OFFSET_STEPS } from '../../../shared/constants.js';
+import SessionSkeleton from '../components/SessionSkeleton';
 
 const ROOM_TILE_MIN_WIDTH = 180;
 const ROOM_TILE_MAX_WIDTH = 840;
@@ -74,6 +75,11 @@ export default function Viewer() {
 
   // Anchor-dead banner: set when server broadcasts ANCHOR_REMOVED
   const [anchorDeadBanner, setAnchorDeadBanner] = useState(false);
+  const [pendingLatestAnchorId, setPendingLatestAnchorId] = useState(null);
+  const [applyingLatestBaseline, setApplyingLatestBaseline] = useState(false);
+
+  // Keyboard shortcuts help overlay
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
 
   useEffect(() => {
     try {
@@ -156,8 +162,17 @@ export default function Viewer() {
   const saveTimers = useRef({});
   // WebSocket instance ref — allows handlePlayerReady to send start-time messages
   const wsRef = useRef(null);
+  const wsStartTimesRef = useRef(new Set());
+  const persistedStartTimesRef = useRef(new Set());
+  const persistingStartTimesRef = useRef(new Set());
   const cycleHideTimerRef = useRef(null);
   const cycleTouchStartRef = useRef(null);
+  const autoInactiveReportsRef = useRef(new Set());
+  const sessionRef = useRef(session);
+  const endingRef = useRef(false);
+
+  useEffect(() => { sessionRef.current = session; }, [session]);
+  useEffect(() => { endingRef.current = ending; }, [ending]);
 
   // Fetch session and streams on mount
   useEffect(() => {
@@ -295,12 +310,14 @@ export default function Viewer() {
   // ── WebSocket — Sync Status Consumer ────────────────────────────────────────
   // Connect to the server's WS and listen for SYNC_OFFSETS, control state, etc.
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || session?.status === 'ended' || ending) return;
 
     let active = true;
     let ws = null;
+    let reconnectTimer = null;
 
     const connect = async () => {
+      if (!active || endingRef.current || sessionRef.current?.status === 'ended') return;
       const token = await getAccessToken();
       if (!active || !token) return;
 
@@ -312,6 +329,8 @@ export default function Viewer() {
       ws.onopen = () => {
         console.log('[WS] Connected to sync server');
 
+        // Re-register all known streams on reconnect
+        registeredStreamsRef.current.clear();
         const currentStreams = streamsRef.current;
         if (currentStreams.length > 0) {
           ws.send(JSON.stringify({
@@ -351,6 +370,10 @@ export default function Viewer() {
                 setOffsets((prev) => ({ ...prev, [streamId]: serverOffset }));
               }
             });
+          } else if (msg.type === 'ANCHOR_REMOVED') {
+            setAnchorDeadBanner(true);
+          } else if (msg.type === 'ANCHOR_AUTO_PROMOTED') {
+            setAnchorDeadBanner(false);
           }
         } catch (err) {
           console.error('[WS] Failed to parse message:', err);
@@ -365,7 +388,12 @@ export default function Viewer() {
         if (wsRef.current === ws) {
           wsRef.current = null;
         }
-        console.log('[WS] Disconnected from sync server');
+        if (active && !endingRef.current && sessionRef.current?.status !== 'ended') {
+          console.log('[WS] Disconnected from sync server, reconnecting in 3s...');
+          reconnectTimer = setTimeout(connect, 3000);
+        } else {
+          console.log('[WS] Disconnected from sync server');
+        }
       };
     };
 
@@ -373,6 +401,7 @@ export default function Viewer() {
 
     return () => {
       active = false;
+      clearTimeout(reconnectTimer);
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.close();
       }
@@ -380,48 +409,87 @@ export default function Viewer() {
         wsRef.current = null;
       }
     };
-  }, [sessionId, getAccessToken]);
+  }, [sessionId, getAccessToken, session?.status, ending]);
+
+  const reportSyntheticStartTime = useCallback(async (streamId, player, { minPlayerTime = 0 } = {}) => {
+    if (!player || sessionRef.current?.status === 'ended') return false;
+
+    if (typeof player.getCurrentTime !== 'function') return false;
+
+    let playerTime = 0;
+    try {
+      playerTime = player.getCurrentTime();
+    } catch (_) {
+      return false;
+    }
+
+    // Twitch's getCurrentTime() returns seconds since broadcast start —
+    // same semantics as YouTube live, so the same formula applies.
+    if (!Number.isFinite(playerTime) || playerTime <= minPlayerTime) return false;
+
+    const syntheticStart = Math.round((Date.now() / 1000) - playerTime);
+    if (!Number.isFinite(syntheticStart) || syntheticStart <= 1000000000) return false;
+
+    const ws = wsRef.current;
+    if (!wsStartTimesRef.current.has(streamId) && ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'STREAM_START_TIME', streamId, startTime: syntheticStart }));
+      wsStartTimesRef.current.add(streamId);
+      console.log(`[Sync] Broadcast start time for ${stream?.display_name || streamId.slice(0, 8)}: ${syntheticStart} (playerTime=${playerTime.toFixed(1)}s)`);
+    }
+
+    if (persistedStartTimesRef.current.has(streamId) || persistingStartTimesRef.current.has(streamId)) {
+      return true;
+    }
+
+    persistingStartTimesRef.current.add(streamId);
+    try {
+      const token = await getAccessToken();
+      const response = await fetch(`/api/sessions/${sessionId}/streams/${streamId}/start-time`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token && { Authorization: `Bearer ${token}` }),
+        },
+        body: JSON.stringify({ startTime: syntheticStart }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Failed to persist start time');
+      }
+
+      persistedStartTimesRef.current.add(streamId);
+      console.log(`[Sync] Persisted start time for ${stream?.display_name || streamId.slice(0, 8)} to Supabase`);
+      return true;
+    } catch (err) {
+      console.error('[Sync] Failed to persist start time:', err);
+      return false;
+    } finally {
+      persistingStartTimesRef.current.delete(streamId);
+    }
+  }, [getAccessToken, sessionId]);
 
   // ── Synthetic start-time computation ──────────────────────────────────────
   // For live streams, getCurrentTime() returns seconds since the stream went
-  // live.  We compute a synthetic Unix start time = Date.now()/1000 - playerTime
-  // and send it to the server so L1 timestamp sync kicks in immediately.
-  // This runs every 5s and only sends once per stream.
-  const sentStartTimes = useRef(new Set());
+  // live. We compute a synthetic Unix start time = Date.now()/1000 - playerTime,
+  // broadcast it to WS, and keep retrying the Supabase persistence until it lands.
   useEffect(() => {
     const timerId = setInterval(() => {
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
       const currentStreams = streamsRef.current;
       if (!currentStreams.length) return;
 
-      const now = Date.now();
       for (const stream of currentStreams) {
-        if (sentStartTimes.current.has(stream.id)) continue;
-
-        // Skip Twitch streams — Twitch embeds don't expose reliable UTC-based time
-        if (stream.platform === 'twitch') continue;
+        if (wsStartTimesRef.current.has(stream.id) && persistedStartTimesRef.current.has(stream.id)) continue;
 
         const player = playerRefs.current[stream.id];
-        if (!player || typeof player.getCurrentTime !== 'function') continue;
+        if (!player) continue;
 
-        try {
-          const pt = player.getCurrentTime();
-          if (typeof pt === 'number' && pt > 10) { // Wait until at least 10s of playback to get a stable reading
-            const syntheticStart = Math.round((now / 1000) - pt);
-            if (syntheticStart > 1000000000) { // sanity: after year 2001
-              ws.send(JSON.stringify({ type: 'STREAM_START_TIME', streamId: stream.id, startTime: syntheticStart }));
-              sentStartTimes.current.add(stream.id);
-              console.log(`[Sync] Sent synthetic start time for ${stream.display_name || stream.id.slice(0, 8)}: ${syntheticStart} (playerTime=${pt.toFixed(1)}s)`);
-            }
-          }
-        } catch (_) {}
+        reportSyntheticStartTime(stream.id, player, { minPlayerTime: 10 }).catch(() => {});
       }
     }, 5000);
 
     return () => clearInterval(timerId);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [reportSyntheticStartTime]);
 
   // ── Position drift-correction interval ────────────────────────────────────
   // Every 8s: for each non-anchor stream, check whether its stage player is
@@ -526,6 +594,19 @@ export default function Viewer() {
   const isCycleView = viewMode === 'cycle';
   const activeMainStream = visibleStreams.find((stream) => stream.id === mainStreamId) ?? null;
 
+  // ── beforeunload warning — prevent host from accidentally leaving a live session ──
+  useEffect(() => {
+    if (!isHost || isVod) return undefined;
+
+    const handler = (e) => {
+      e.preventDefault();
+      e.returnValue = '';  // required by browsers
+    };
+
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isHost, isVod]);
+
   useEffect(() => {
     if (!visibleStreams.some((stream) => stream.id === cycleHoverStreamId)) {
       setCycleHoverStreamId(null);
@@ -539,7 +620,7 @@ export default function Viewer() {
   const effectiveSyncStats = syncStats ?? (visibleStreams.length > 0 ? {
     offsets:             Object.fromEntries(visibleStreams.map((s) => [s.id, s.offset_seconds ?? 0])),
     confidence:          Object.fromEntries(visibleStreams.map((s) => [s.id, 0])),
-    startTimesAvailable: Object.fromEntries(visibleStreams.map((s) => [s.id, false])),
+    startTimesAvailable: Object.fromEntries(visibleStreams.map((s) => [s.id, Boolean(s.youtube_start_time)])),
     anchorStreamId:      anchorStream?.id ?? null,
     timestamp:           null,
   } : null);
@@ -625,42 +706,8 @@ export default function Viewer() {
 
     syncMirroredPair(streamId, streamId);
 
-    // ── Report synthetic start time to sync server ─────────────────────────
-    // For live YouTube streams, getCurrentTime() returns elapsed seconds since
-    // the stream went live.  We compute: startTime ≈ Date.now()/1000 - playerTime.
-    // Also persist to DB so VOD recalculation survives server restarts.
-    // Skip Twitch streams — they don't expose reliable UTC-based timing.
-    const stream = streams.find((s) => s.id === streamId);
-    const isTwitch = stream?.platform === 'twitch' || player._isTwitch;
-
-    if (sessionStatus !== 'ended' && !isTwitch) {
-      try {
-        const pt = player.getCurrentTime?.() ?? 0;
-        if (pt > 0) {
-          const wallMs = Date.now();
-          const syntheticStart = Math.round((wallMs / 1000) - pt);
-
-          if (syntheticStart > 1000000000) { // sanity: after year 2001
-            // 1. Tell sync server via WS
-            const ws = wsRef.current;
-            if (ws?.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'STREAM_START_TIME', streamId, startTime: syntheticStart }));
-            }
-            // 2. Persist to DB
-            getAccessToken().then((token) => {
-              fetch(`/api/sessions/${sessionId}/streams/${streamId}/start-time`, {
-                method: 'PATCH',
-                headers: {
-                  'Content-Type': 'application/json',
-                  ...(token && { Authorization: `Bearer ${token}` }),
-                },
-                body: JSON.stringify({ startTime: syntheticStart }),
-              }).catch(() => {});
-            }).catch(() => {});
-            console.log(`[Sync] Sent start time for ${streamId.slice(0, 8)}: ${syntheticStart} (playerTime=${pt.toFixed(1)}s)`);
-          }
-        }
-      } catch (_) {}
+    if (sessionStatus !== 'ended') {
+      reportSyntheticStartTime(streamId, player).catch(() => {});
     }
 
     // ── VOD mode: seek all streams to aligned start positions ───────────────
@@ -678,11 +725,44 @@ export default function Viewer() {
       try { playerRefs.current[stream.id]?.seekTo(target, true); } catch (_) {}
       try { playerRefs.current[`film-${stream.id}`]?.seekTo(target, true); } catch (_) {}
     });
-  }, [getAccessToken, sessionId, syncMirroredPair]);
+  }, [reportSyntheticStartTime, syncMirroredPair]);
 
-  // Keep a stable ref to the session object for use inside callbacks
-  const sessionRef = useRef(session);
-  useEffect(() => { sessionRef.current = session; }, [session]);
+  const reportStreamInactive = useCallback(async (streamId, reason = 'ended') => {
+    if (!sessionId || sessionRef.current?.status === 'ended') return;
+    if (autoInactiveReportsRef.current.has(streamId)) return;
+
+    const stream = streamsRef.current.find((entry) => entry.id === streamId);
+    if (!stream) return;
+
+    const canReport = isHost || stream.user_id === user?.id;
+    if (!canReport) return;
+
+    autoInactiveReportsRef.current.add(streamId);
+
+    try {
+      const token = await getAccessToken();
+      const response = await fetch(`/api/sessions/${sessionId}/streams/${streamId}/auto-inactive`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token && { Authorization: `Bearer ${token}` }),
+        },
+        body: JSON.stringify({ reason }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Auto-inactive request failed (${response.status})`);
+      }
+
+      const payload = await response.json().catch(() => ({}));
+      if (payload?.promotedAnchorStreamId) {
+        setAnchorDeadBanner(false);
+      }
+    } catch (err) {
+      console.error('[Viewer] Failed to auto-archive ended stream:', err);
+      autoInactiveReportsRef.current.delete(streamId);
+    }
+  }, [getAccessToken, isHost, sessionId, user?.id]);
 
   // Called whenever ANY stage player fires a play/pause/buffering state change.
   // Anchor plays/pauses  → sync play/pause state on ALL other players.
@@ -697,6 +777,11 @@ export default function Viewer() {
     if (syncingRef.current) return;
     const YT = window.YT;
     if (!YT) return;
+
+    if (sessionRef.current?.status !== 'ended' && state === YT.PlayerState.ENDED) {
+      reportStreamInactive(streamId, 'youtube-ended');
+      return;
+    }
 
     const isAnchor = streamsRef.current.find((s) => s.id === streamId)?.is_anchor ?? false;
 
@@ -751,7 +836,12 @@ export default function Viewer() {
     }
 
     syncingRef.current = false;
-  }, []);
+  }, [reportStreamInactive]);
+
+  const handleStageError = useCallback((streamId, errorCode) => {
+    if (sessionRef.current?.status === 'ended') return;
+    reportStreamInactive(streamId, `player-error:${String(errorCode)}`);
+  }, [reportStreamInactive]);
 
   const handleSwapStream = useCallback((newStreamId) => {
     if (newStreamId === mainStreamId) return;
@@ -937,6 +1027,43 @@ export default function Viewer() {
     syncingRef.current = false;
   }, []);
 
+  // ── Global keyboard shortcuts ───────────────────────────────────────────────
+  useEffect(() => {
+    const handleGlobalKey = (e) => {
+      // Skip if user is typing in an input/textarea
+      const tag = e.target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable) return;
+
+      switch (e.key) {
+        case ' ':
+          e.preventDefault();
+          if (isPlayingRef.current) {
+            handlePauseAll();
+          } else {
+            handlePlayAll();
+          }
+          break;
+        case '1': case '2': case '3': case '4': case '5': {
+          const idx = Number(e.key) - 1;
+          const stream = visibleStreams[idx];
+          if (stream) handleSwapStream(stream.id);
+          break;
+        }
+        case '?':
+          setShowShortcutsHelp((v) => !v);
+          break;
+        case 'Escape':
+          setShowShortcutsHelp(false);
+          break;
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKey);
+    return () => window.removeEventListener('keydown', handleGlobalKey);
+  }, [handlePlayAll, handlePauseAll, handleSwapStream, visibleStreams]);
+
   // Go Live — snap every stream to its live edge, accounting for its offset.
   // Uses getDuration() which returns the live DVR window length for live streams;
   // seeking to that value moves to the live edge without overshooting.
@@ -959,6 +1086,15 @@ export default function Viewer() {
     });
     syncingRef.current = false;
   }, []);
+
+  useEffect(() => {
+    if (!pendingLatestAnchorId) return;
+    if (effectiveSyncStats?.anchorStreamId !== pendingLatestAnchorId) return;
+
+    handleGoLive();
+    setPendingLatestAnchorId(null);
+    setApplyingLatestBaseline(false);
+  }, [effectiveSyncStats?.anchorStreamId, handleGoLive, pendingLatestAnchorId]);
 
   // Re-sync — snap all streams to their correct positions relative to anchor
   const handleResync = useCallback(() => {
@@ -1126,22 +1262,72 @@ export default function Viewer() {
     });
   }, [sessionId, getAccessToken]);
 
-  // End session handler
-  function handleEndSession() {
-    const doEnd = async () => {
-      setEnding(true);
+  const handleSyncToLatestStart = useCallback(() => {
+    const doSync = async () => {
       try {
+        setApplyingLatestBaseline(true);
         const token = await getAccessToken();
-        const res = await fetch(`/api/sessions/${sessionId}/end`, {
+        const res = await fetch(`/api/sessions/${sessionId}/sync-to-latest`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             ...(token && { Authorization: `Bearer ${token}` }),
           },
         });
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.error || 'Failed to sync to latest POV');
+        }
+
+        setPendingLatestAnchorId(data.streamId || null);
+      } catch (err) {
+        setApplyingLatestBaseline(false);
+        setPendingLatestAnchorId(null);
+        setModal({ title: 'Error', message: err.message, variant: 'alert', confirmLabel: 'OK' });
+      }
+    };
+
+    setModal({
+      title: 'Apply Latest Baseline',
+      message: 'Use the newest confirmed POV as the room sync baseline? The room will snap back to live after the recalculated offsets arrive, and those offsets will carry into the VOD.',
+      confirmLabel: 'Apply Baseline',
+      onConfirm: doSync,
+    });
+  }, [getAccessToken, sessionId]);
+
+  // End session handler
+  function handleEndSession() {
+    const doEnd = async () => {
+      setEnding(true);
+      try {
+        const token = await getAccessToken();
+        if (!token) {
+          throw new Error('Your sign-in expired. Refresh the page and try again.');
+        }
+
+        const res = await fetch(`/api/sessions/${sessionId}/end`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+        });
         if (!res.ok) {
           const data = await res.json();
           throw new Error(data.error || 'Failed to end session');
+        }
+
+        const endedAt = new Date().toISOString();
+        setSession((prev) => (prev ? {
+          ...prev,
+          status: 'ended',
+          ended_at: prev.ended_at ?? endedAt,
+          vod_ready_at: prev.vod_ready_at ?? endedAt,
+        } : prev));
+
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.close(1000, 'session ended');
         }
       } catch (err) {
         setModal({ title: 'Error', message: err.message, variant: 'alert', confirmLabel: 'OK' });
@@ -1193,11 +1379,7 @@ export default function Viewer() {
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="w-8 h-8 border-2 border-pov-accent border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
+    return <SessionSkeleton />;
   }
 
   if (error) {
@@ -1212,7 +1394,12 @@ export default function Viewer() {
   }
 
   return (
-    <div className="w-full max-w-none px-2.5 sm:px-4 py-3 sm:py-4">
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.28, ease: 'easeOut' }}
+      className="w-full max-w-none px-2.5 sm:px-4 py-3 sm:py-4"
+    >
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -1236,7 +1423,7 @@ export default function Viewer() {
                   {VIEW_MODE_OPTIONS.find((mode) => mode.id === viewMode)?.shortLabel || 'Stage'}
                 </span>
               </div>
-              <h1 className="text-lg sm:text-xl font-bold tracking-tight text-pov-text">Live room</h1>
+              <h1 className="text-lg sm:text-xl font-bold tracking-tight text-pov-text">{session?.title || 'Live room'}</h1>
               <p className="mt-1 text-xs sm:text-sm leading-relaxed text-pov-muted">
                 {isRoomHeaderCollapsed
                   ? `${hostName} · ${session?.participant_link || session?.spectator_link || session?.id?.slice(0, 8) || 'session'}`
@@ -1549,6 +1736,7 @@ export default function Viewer() {
                     isMain={isActive}
                     onReady={(player) => handlePlayerReady(stream.id, player)}
                     onStateChange={(state) => handleStageStateChange(stream.id, state)}
+                    onError={(errorCode) => handleStageError(stream.id, errorCode)}
                     className="w-full h-full"
                   />
 
@@ -1764,11 +1952,14 @@ export default function Viewer() {
       </div>
 
       {/* Sync Status Panel — host/delegate, live sessions */}
-      {hasControl && !isVod && effectiveSyncStats && (
+      {isHost && !isVod && effectiveSyncStats && (
         <SyncStatusPanel
           streams={visibleStreams}
           syncStats={effectiveSyncStats}
           session={session}
+          onApplyLatestBaseline={handleSyncToLatestStart}
+          applyingLatestBaseline={applyingLatestBaseline}
+          pendingLatestAnchorId={pendingLatestAnchorId}
         />
       )}
 
@@ -1872,7 +2063,53 @@ export default function Viewer() {
         }}
         onCancel={() => setModal(null)}
       />
-    </div>
+
+      {/* Keyboard shortcuts help overlay */}
+      <AnimatePresence>
+        {showShortcutsHelp && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+            onClick={() => setShowShortcutsHelp(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+              className="bg-pov-surface border border-pov-border rounded-2xl p-6 sm:p-8 max-w-sm w-full mx-4 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h2 className="text-lg font-bold text-pov-text mb-4">Keyboard Shortcuts</h2>
+              <div className="space-y-2.5">
+                {[
+                  ['Space', 'Play / Pause all'],
+                  ['1 – 5', 'Switch POV'],
+                  ['← →', 'Cycle POV (cycle view)'],
+                  ['?', 'Toggle this help'],
+                  ['Esc', 'Close overlay'],
+                ].map(([key, desc]) => (
+                  <div key={key} className="flex items-center justify-between gap-4">
+                    <kbd className="text-xs font-mono bg-pov-bg border border-pov-border rounded px-2 py-1 text-pov-accent min-w-[60px] text-center">{key}</kbd>
+                    <span className="text-sm text-pov-muted">{desc}</span>
+                  </div>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowShortcutsHelp(false)}
+                className="mt-6 w-full bg-pov-bg border border-pov-border rounded-lg py-2 text-sm font-medium text-pov-text hover:bg-pov-border/30 transition-colors"
+              >
+                Close
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   );
 }
 
@@ -2091,22 +2328,36 @@ function CycleViewPicker({
  * Collapsible sync status panel — host only.
  * Shows per-stream: status, offset, start time availability.
  */
-function SyncStatusPanel({ streams, syncStats, session }) {
+function SyncStatusPanel({ streams, syncStats, onApplyLatestBaseline, applyingLatestBaseline, pendingLatestAnchorId }) {
   const [collapsed, setCollapsed] = useState(false);
 
   const {
-    offsets, confidence, startTimesAvailable,
+    offsets, startTimesAvailable,
     anchorStreamId, timestamp,
   } = syncStats;
 
   const secAgo = timestamp ? Math.round((Date.now() - timestamp) / 1000) : null;
 
+  const eligibleStreams = streams.filter((stream) => stream.platform !== 'twitch');
+  const confirmedStreams = eligibleStreams.filter((stream) => Number.isFinite(stream.youtube_start_time) && stream.youtube_start_time > 0);
+  const latestConfirmedStream = [...confirmedStreams].sort((left, right) => right.youtube_start_time - left.youtube_start_time)[0] ?? null;
+  const currentAnchor = streams.find((stream) => stream.id === anchorStreamId) ?? null;
+  const vodReady = eligibleStreams.length > 0 && confirmedStreams.length === eligibleStreams.length;
+  const anchorStartTime = Number.isFinite(currentAnchor?.youtube_start_time) ? currentAnchor.youtube_start_time : null;
+
   function statusFor(streamId) {
     const isAnchor = streamId === anchorStreamId;
-    const hasStartTime = startTimesAvailable?.[streamId];
-    if (isAnchor)     return { dot: '⚓', color: 'text-pov-muted',   label: 'Anchor' };
-    if (hasStartTime) return { dot: '●', color: 'text-pov-success', label: 'Synced' };
-    return                   { dot: '●', color: 'text-pov-muted/40', label: 'Waiting' };
+    const stream = streams.find((entry) => entry.id === streamId);
+    const isTwitch = stream?.platform === 'twitch';
+    const hasLiveStart = Boolean(startTimesAvailable?.[streamId]);
+    const hasPersistedStart = Number.isFinite(stream?.youtube_start_time) && stream.youtube_start_time > 0;
+
+    if (isTwitch) return { dot: '●', color: 'text-pov-muted/40', label: 'Unsupported', detail: 'Twitch live timing is not persisted' };
+    if (isAnchor && hasPersistedStart) return { dot: '⚓', color: 'text-pov-accent', label: 'Baseline', detail: 'Current room baseline' };
+    if (isAnchor) return { dot: '⚓', color: 'text-pov-muted', label: 'Anchor', detail: 'Waiting for confirmed start time' };
+    if (hasPersistedStart) return { dot: '●', color: 'text-pov-success', label: 'Confirmed', detail: 'Saved in Supabase and ready for VOD' };
+    if (hasLiveStart) return { dot: '●', color: 'text-yellow-400', label: 'Saving', detail: 'Live start detected; waiting for Supabase confirmation' };
+    return { dot: '●', color: 'text-pov-muted/40', label: 'Waiting', detail: 'Needs a stable YouTube start time' };
   }
 
   const fmtOffset = (v) => {
@@ -2115,9 +2366,34 @@ function SyncStatusPanel({ streams, syncStats, session }) {
     return `${sign}${v.toFixed(2)}s`;
   };
 
-  const nonAnchor = streams.filter((s) => s.id !== anchorStreamId);
-  const syncedCount = nonAnchor.filter((s) => startTimesAvailable?.[s.id]).length;
-  const total = nonAnchor.length;
+  const fmtUtc = (unixSeconds) => {
+    if (!Number.isFinite(unixSeconds) || unixSeconds <= 0) return 'UTC pending';
+
+    return new Date(unixSeconds * 1000).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      timeZoneName: 'short',
+    });
+  };
+
+  const fmtRelativeToBaseline = (unixSeconds) => {
+    if (!Number.isFinite(unixSeconds) || !Number.isFinite(anchorStartTime)) {
+      return 'Relative pending';
+    }
+
+    const deltaSeconds = Math.round((unixSeconds - anchorStartTime) * 10) / 10;
+    if (Math.abs(deltaSeconds) < 0.05) return 'Matches baseline';
+
+    const sign = deltaSeconds > 0 ? '+' : '−';
+    const absoluteSeconds = Math.abs(deltaSeconds);
+    return `${sign}${absoluteSeconds.toFixed(1)}s ${deltaSeconds > 0 ? 'after' : 'before'} baseline`;
+  };
+
+  const liveDetectedCount = eligibleStreams.filter((stream) => startTimesAvailable?.[stream.id]).length;
+  const pendingLabel = pendingLatestAnchorId
+    ? streams.find((stream) => stream.id === pendingLatestAnchorId)?.display_name || 'selected POV'
+    : null;
 
   return (
     <div className="bg-pov-surface border border-pov-border rounded-lg mt-2 sm:mt-3 overflow-hidden">
@@ -2127,17 +2403,17 @@ function SyncStatusPanel({ streams, syncStats, session }) {
         className="w-full flex items-center justify-between px-3 sm:px-4 py-2 sm:py-2.5 hover:bg-pov-bg/40 transition-colors"
       >
         <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
-          <span className="text-[10px] sm:text-xs font-mono text-pov-muted uppercase tracking-wider">Sync</span>
+          <span className="text-[10px] sm:text-xs font-mono text-pov-muted uppercase tracking-wider">Sync Readiness</span>
           <span className="text-[9px] sm:text-[10px] font-mono px-1.5 py-0.5 rounded border text-pov-accent border-pov-accent/30 bg-pov-accent/10">
             UTC
           </span>
-          {total > 0 && (
+          {eligibleStreams.length > 0 && (
             <span className={`text-[9px] sm:text-[10px] font-mono px-1.5 py-0.5 rounded border ${
-              syncedCount === total
+              confirmedStreams.length === eligibleStreams.length
                 ? 'text-pov-success border-pov-success/30 bg-pov-success/10'
                 : 'text-yellow-400 border-yellow-400/30 bg-yellow-400/10'
             }`}>
-              {syncedCount}/{total}
+              {confirmedStreams.length}/{eligibleStreams.length} confirmed
             </span>
           )}
           {secAgo !== null && (
@@ -2152,12 +2428,69 @@ function SyncStatusPanel({ streams, syncStats, session }) {
       {/* Body */}
       {!collapsed && (
         <div className="border-t border-pov-border px-3 sm:px-4 py-2 sm:py-3 overflow-x-auto">
+          <div className="mb-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-lg border border-pov-border/60 bg-pov-bg/60 px-3 py-2">
+              <p className="text-[9px] font-mono uppercase tracking-wider text-pov-muted">Supabase</p>
+              <p className="mt-1 text-sm font-semibold text-pov-text">{confirmedStreams.length}/{eligibleStreams.length || 0}</p>
+              <p className="mt-1 text-[10px] text-pov-muted/70">Confirmed start times saved and ready for VOD.</p>
+            </div>
+            <div className="rounded-lg border border-pov-border/60 bg-pov-bg/60 px-3 py-2">
+              <p className="text-[9px] font-mono uppercase tracking-wider text-pov-muted">Live Detection</p>
+              <p className="mt-1 text-sm font-semibold text-pov-text">{liveDetectedCount}/{eligibleStreams.length || 0}</p>
+              <p className="mt-1 text-[10px] text-pov-muted/70">YouTube start times seen by the live sync server.</p>
+            </div>
+            <div className="rounded-lg border border-pov-border/60 bg-pov-bg/60 px-3 py-2">
+              <p className="text-[9px] font-mono uppercase tracking-wider text-pov-muted">Current Baseline</p>
+              <p className="mt-1 truncate text-sm font-semibold text-pov-text">{currentAnchor?.display_name || 'Waiting for anchor'}</p>
+              <p className="mt-1 text-[10px] text-pov-muted/70">{fmtUtc(currentAnchor?.youtube_start_time)}</p>
+              <p className="mt-1 text-[10px] text-pov-muted/60">Offsets are currently measured from this POV.</p>
+            </div>
+            <div className="rounded-lg border border-pov-border/60 bg-pov-bg/60 px-3 py-2">
+              <p className="text-[9px] font-mono uppercase tracking-wider text-pov-muted">Latest Confirmed</p>
+              <p className="mt-1 truncate text-sm font-semibold text-pov-text">{latestConfirmedStream?.display_name || 'Waiting for confirmation'}</p>
+              <p className="mt-1 text-[10px] text-pov-muted/70">{fmtUtc(latestConfirmedStream?.youtube_start_time)}</p>
+              <p className="mt-1 text-[10px] text-pov-muted/60">
+                {latestConfirmedStream ? fmtRelativeToBaseline(latestConfirmedStream.youtube_start_time) : 'Best candidate for the newest shared game moment.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="mb-3 flex flex-col gap-2 rounded-xl border border-pov-border/60 bg-pov-bg/50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-[10px] font-mono uppercase tracking-[0.16em] text-pov-muted">VOD Handoff</p>
+              <p className="mt-1 text-sm font-semibold text-pov-text">
+                {vodReady ? 'Ready to end as a synced VOD' : 'Waiting for all YouTube POVs to confirm'}
+              </p>
+              <p className="mt-1 text-[11px] text-pov-muted/75">
+                {vodReady
+                  ? 'Every eligible POV has a saved UTC start time. You can apply the latest baseline now or end the room when ready.'
+                  : 'Let each YouTube POV play past ~10 seconds until it shows Confirmed.'}
+              </p>
+              {pendingLabel && (
+                <p className="mt-1 text-[11px] text-pov-accent/90">
+                  Applying latest baseline from {pendingLabel}… snapping the room back to live when offsets finish updating.
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={onApplyLatestBaseline}
+              disabled={!latestConfirmedStream || applyingLatestBaseline}
+              className="rounded-lg border border-pov-accent/35 bg-pov-accent/10 px-3 py-2 text-[10px] sm:text-xs font-mono text-pov-text transition-colors hover:border-pov-accent/60 hover:bg-pov-accent/16 disabled:cursor-not-allowed disabled:opacity-40"
+              title="Use the latest confirmed POV as the sync baseline and snap back to live"
+            >
+              {applyingLatestBaseline ? 'Applying…' : 'Use Latest Baseline'}
+            </button>
+          </div>
+
           <table className="w-full text-[10px] sm:text-[11px] font-mono">
             <thead>
               <tr className="text-pov-muted/60 text-left">
                 <th className="pb-1.5 font-normal w-4"></th>
                 <th className="pb-1.5 font-normal">Stream</th>
-                <th className="pb-1.5 font-normal w-20">Status</th>
+                <th className="pb-1.5 font-normal w-24">Live</th>
+                <th className="pb-1.5 font-normal w-24">Supabase</th>
+                <th className="pb-1.5 font-normal w-24">Role</th>
                 <th className="pb-1.5 font-normal w-16 text-right">Offset</th>
               </tr>
             </thead>
@@ -2166,14 +2499,32 @@ function SyncStatusPanel({ streams, syncStats, session }) {
                 const st = statusFor(stream.id);
                 const offset  = offsets[stream.id];
                 const isAnchor = stream.id === anchorStreamId;
+                const hasLiveStart = Boolean(startTimesAvailable?.[stream.id]);
+                const hasPersistedStart = Number.isFinite(stream.youtube_start_time) && stream.youtube_start_time > 0;
+                const isTwitch = stream.platform === 'twitch';
+                const relativeLabel = isAnchor
+                  ? 'Current baseline'
+                  : fmtRelativeToBaseline(stream.youtube_start_time);
                 return (
                   <tr key={stream.id} className="border-t border-pov-border/40">
                     <td className={`py-1.5 pr-2 ${st.color}`}>{st.dot}</td>
                     <td className="py-1.5 pr-3">
                       <span className="text-pov-text truncate block max-w-[120px]">{stream.display_name}</span>
+                      <span className="mt-0.5 block text-[9px] text-pov-muted/60">{fmtUtc(stream.youtube_start_time)}</span>
+                      <span className="mt-0.5 block text-[9px] text-pov-muted/50">{isTwitch ? 'Live-only POV' : relativeLabel}</span>
                     </td>
                     <td className="py-1.5 pr-3">
-                      <span className={st.color}>{st.label}</span>
+                      <span className={isTwitch ? 'text-pov-muted/40' : hasLiveStart ? 'text-pov-success' : 'text-pov-muted/40'}>
+                        {isTwitch ? '—' : hasLiveStart ? 'Seen' : 'Waiting'}
+                      </span>
+                    </td>
+                    <td className="py-1.5 pr-3">
+                      <span className={isTwitch ? 'text-pov-muted/40' : hasPersistedStart ? 'text-pov-success' : hasLiveStart ? 'text-yellow-400' : 'text-pov-muted/40'}>
+                        {isTwitch ? 'Unsupported' : hasPersistedStart ? 'Confirmed' : hasLiveStart ? 'Saving' : 'Pending'}
+                      </span>
+                    </td>
+                    <td className="py-1.5 pr-3">
+                      <span className={st.color} title={st.detail}>{st.label}</span>
                     </td>
                     <td className={`py-1.5 text-right ${
                       isAnchor ? 'text-pov-muted/40' : offset !== null && offset !== undefined ? 'text-pov-accent' : 'text-pov-muted/40'
@@ -2188,8 +2539,8 @@ function SyncStatusPanel({ streams, syncStats, session }) {
 
           <div className="mt-2 pt-2 border-t border-pov-border/40">
             <span className="text-[9px] font-mono text-pov-muted/50">
-              Offsets computed from UTC start times — no audio processing needed.
-              Live streams are synced by YouTube. VOD offsets applied automatically.
+              Confirmed means the UTC start time is already stored in `streams.youtube_start_time`.
+              Using the latest baseline recalculates offsets from the newest confirmed POV so the same alignment can be replayed in the VOD.
             </span>
           </div>
         </div>

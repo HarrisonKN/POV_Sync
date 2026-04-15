@@ -13,7 +13,7 @@ function loadTwitchAPI() {
 
   if (twitchApiPromise) return twitchApiPromise;
 
-  twitchApiPromise = new Promise((resolve) => {
+  twitchApiPromise = new Promise((resolve, reject) => {
     // If already loaded (e.g. from a previous mount)
     if (window.Twitch?.Player) {
       twitchApiReady = true;
@@ -28,8 +28,8 @@ function loadTwitchAPI() {
       resolve();
     };
     tag.onerror = () => {
-      twitchApiPromise = null; // allow retry
-      resolve(); // resolve anyway to avoid hanging
+      twitchApiPromise = null; // allow retry on next mount
+      reject(new Error('Failed to load Twitch embed script'));
     };
     document.head.appendChild(tag);
   });
@@ -58,11 +58,20 @@ function TwitchPlayer({
   isMain = false,
   onReady,
   onStateChange,
+  onError,
   className = '',
 }) {
   const containerRef = useRef(null);
   const playerRef = useRef(null);
   const isMainRef = useRef(isMain);
+  const onReadyRef = useRef(onReady);
+  const onStateChangeRef = useRef(onStateChange);
+  const onErrorRef = useRef(onError);
+
+  // Keep callback refs current so the player always calls the latest version
+  useEffect(() => { onReadyRef.current = onReady; }, [onReady]);
+  useEffect(() => { onStateChangeRef.current = onStateChange; }, [onStateChange]);
+  useEffect(() => { onErrorRef.current = onError; }, [onError]);
 
   const channel = extractTwitchChannel(twitchUrl);
 
@@ -87,7 +96,13 @@ function TwitchPlayer({
     let destroyed = false;
 
     async function init() {
-      await loadTwitchAPI();
+      try {
+        await loadTwitchAPI();
+      } catch (err) {
+        console.error('[TwitchPlayer]', err.message);
+        if (!destroyed && onErrorRef.current) onErrorRef.current('SCRIPT_LOAD_FAILED');
+        return;
+      }
       if (destroyed) return;
 
       const container = containerRef.current;
@@ -143,8 +158,8 @@ function TwitchPlayer({
 
       // Create a shim API compatible with the YouTubePlayer ref interface
       const apiShim = {
-        // Twitch players are always live — getCurrentTime isn't meaningful
-        // but we provide a stub for compatibility
+        // Twitch's getCurrentTime() returns seconds since the broadcast started —
+        // used for synthetic start-time computation and drift correction
         getCurrentTime: () => {
           try {
             return player.getCurrentTime?.() ?? 0;
@@ -192,19 +207,33 @@ function TwitchPlayer({
           }
           player.play();
         } catch (_) {}
-        if (onReady) onReady(apiShim);
+        if (onReadyRef.current) onReadyRef.current(apiShim);
       });
 
       // Map Twitch events to YouTube-like state values for consistency
       player.addEventListener(window.Twitch.Player.PLAYING, () => {
         if (destroyed) return;
-        if (onStateChange) onStateChange(1); // YT.PlayerState.PLAYING = 1
+        if (onStateChangeRef.current) onStateChangeRef.current(1); // YT.PlayerState.PLAYING = 1
       });
 
       player.addEventListener(window.Twitch.Player.PAUSE, () => {
         if (destroyed) return;
-        if (onStateChange) onStateChange(2); // YT.PlayerState.PAUSED = 2
+        if (onStateChangeRef.current) onStateChangeRef.current(2); // YT.PlayerState.PAUSED = 2
       });
+
+      if (window.Twitch.Player.OFFLINE) {
+        player.addEventListener(window.Twitch.Player.OFFLINE, () => {
+          if (destroyed) return;
+          if (onErrorRef.current) onErrorRef.current('OFFLINE');
+        });
+      }
+
+      if (window.Twitch.Player.ENDED) {
+        player.addEventListener(window.Twitch.Player.ENDED, () => {
+          if (destroyed) return;
+          if (onErrorRef.current) onErrorRef.current('ENDED');
+        });
+      }
 
       return observer;
     }

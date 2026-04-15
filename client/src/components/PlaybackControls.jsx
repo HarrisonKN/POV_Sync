@@ -20,6 +20,8 @@ export default function PlaybackControls({
   onGoLive,
   onResync,
   showLiveActions = false,
+  goLiveLabel = 'Go live',
+  resyncLabel = 'Re-sync',
 }) {
   return (
     <div className="bg-pov-surface border border-pov-border rounded-lg p-3 sm:p-4 mt-2 sm:mt-3">
@@ -81,14 +83,14 @@ export default function PlaybackControls({
               onClick={onGoLive}
               className="text-[10px] sm:text-xs font-mono bg-pov-bg border border-pov-border text-pov-text hover:bg-pov-border/30 rounded px-2.5 sm:px-3 py-1.5 transition-colors"
             >
-              Go live
+              {goLiveLabel}
             </button>
             <button
               type="button"
               onClick={onResync}
               className="text-[10px] sm:text-xs font-mono bg-pov-bg border border-pov-border text-pov-text hover:bg-pov-border/30 rounded px-2.5 sm:px-3 py-1.5 transition-colors"
             >
-              Re-sync
+              {resyncLabel}
             </button>
           </div>
         )}

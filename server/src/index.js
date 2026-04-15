@@ -1,12 +1,14 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { createServer } from 'http';
 import sessionRoutes from './routes/sessions.js';
 import { setupWebSocket } from './websocket/index.js';
 import { stopAllSessions } from './services/syncManager.js';
 import { loadServerEnv } from './lib/loadEnv.js';
+import { supabaseAdmin } from './lib/supabase.js';
 
 loadServerEnv();
 
@@ -118,6 +120,50 @@ app.use((err, req, res, next) => {
 // In production, serve the built React frontend
 const clientDistPath = path.join(__dirname, '../../client/dist');
 app.use(express.static(clientDistPath));
+
+// ── OpenGraph meta tags for spectator links ──────────────────────────────────
+// Social platforms / link previews fetch the raw HTML (no JS), so we inject
+// og:title / og:description into the served index.html for /watch/:code routes.
+app.get('/watch/:code', async (req, res, next) => {
+  try {
+    const htmlPath = path.join(clientDistPath, 'index.html');
+    if (!fs.existsSync(htmlPath)) return next(); // dev mode — no built HTML
+
+    const { code } = req.params;
+    const { data: session } = await supabaseAdmin
+      .from('sessions')
+      .select('id, title, status, streams!streams_session_id_fkey(display_name)')
+      .eq('spectator_link', code)
+      .single();
+
+    if (!session) return next(); // fall through to SPA
+
+    const streamNames = (session.streams || []).map((s) => s.display_name).filter(Boolean).join(', ');
+    const ogTitle = session.title || `POV Sync — ${session.status === 'live' ? 'Live' : 'VOD'} Session`;
+    const ogDesc = streamNames
+      ? `Watch ${streamNames} in multi-POV sync`
+      : `A ${session.status === 'live' ? 'live' : 'saved'} multi-POV session on POV Sync`;
+
+    const escHtml = (s) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+
+    let html = fs.readFileSync(htmlPath, 'utf-8');
+    const metaTags = [
+      `<meta property="og:title" content="${escHtml(ogTitle)}" />`,
+      `<meta property="og:description" content="${escHtml(ogDesc)}" />`,
+      `<meta property="og:type" content="website" />`,
+      `<meta name="twitter:card" content="summary" />`,
+      `<meta name="twitter:title" content="${escHtml(ogTitle)}" />`,
+      `<meta name="twitter:description" content="${escHtml(ogDesc)}" />`,
+    ].join('\n    ');
+
+    html = html.replace('</head>', `    ${metaTags}\n  </head>`);
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+  } catch (err) {
+    console.error('[OG] Error injecting meta tags:', err.message);
+    next(); // fall through to normal SPA on error
+  }
+});
 
 // SPA fallback — any non-API route serves index.html so React Router handles it
 app.get('*', (req, res) => {

@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS public.sessions (
   host_id          uuid NOT NULL REFERENCES public.users(id),
   participant_link text UNIQUE NOT NULL,
   spectator_link   text UNIQUE NOT NULL,
+  title            text,  -- optional session title
   status           text CHECK (status IN ('live', 'ended')) DEFAULT 'live',
   anchor_stream_id uuid,  -- FK added after streams table exists
   created_at       timestamptz DEFAULT now(),

@@ -5,6 +5,7 @@ import { useActiveSession } from '../hooks/useActiveSession';
 import { supabase } from '../lib/supabase';
 import SessionResumeCard from '../components/SessionResumeCard';
 import FollowButton from '../components/FollowButton';
+import HomeSkeleton from '../components/HomeSkeleton';
 import {
   fetchFollowLists,
   fetchProfileSessions,
@@ -54,17 +55,20 @@ export default function Home() {
 
   // Panel toggles
   const [activePanel, setActivePanel] = useState(null); // 'create' | 'join' | null
+  const [showSocial, setShowSocial] = useState(false); // collapsed by default
 
   // Create form
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState('');
+  const [sessionTitle, setSessionTitle] = useState('');
 
   // Join form
   const [joinInput, setJoinInput] = useState('');
   const [joinError, setJoinError] = useState('');
 
   // Data
+  const [dashboardLoading, setDashboardLoading] = useState(true);
   const [liveSessions, setLiveSessions] = useState([]);
   const [recentSessions, setRecentSessions] = useState([]);
   const [publicLiveCount, setPublicLiveCount] = useState(0);
@@ -130,6 +134,8 @@ export default function Home() {
       } catch (err) {
         console.error('Error loading dashboard:', err);
         setSocialError('Could not load your following feed yet.');
+      } finally {
+        setDashboardLoading(false);
       }
     })();
   }, [loadFollowingState, user?.id]);
@@ -174,6 +180,14 @@ export default function Home() {
     };
   }, [searchQuery, user?.id]);
 
+  /* ── Auto-expand social section when followed users are live */
+
+  useEffect(() => {
+    if (followingLiveSessions.length > 0) {
+      setShowSocial(true);
+    }
+  }, [followingLiveSessions.length]);
+
   /* ── Keyboard shortcut: Ctrl+K to toggle join ──────────── */
 
   const handleKeyDown = useCallback((e) => {
@@ -207,6 +221,7 @@ export default function Home() {
         body: JSON.stringify({
           youtubeUrl: youtubeUrl.trim(),
           displayName: profile?.display_name || user.email,
+          ...(sessionTitle.trim() && { title: sessionTitle.trim() }),
         }),
       });
       if (!res.ok) {
@@ -376,9 +391,14 @@ export default function Home() {
 
   /* ── signed-in dashboard — wide, grid-based ────────────── */
 
+  if (dashboardLoading) {
+    return <HomeSkeleton />;
+  }
+
   const hasLive = liveSessions.length > 0;
   const hasRecent = recentSessions.length > 0;
-  const isEmpty = !hasLive && !hasRecent && activePanel === null;
+  const hasSocialContent = followingIds.length > 0 || followingLiveSessions.length > 0 || followingRecentSessions.length > 0;
+  const isEmpty = !hasLive && !hasRecent;
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
@@ -409,27 +429,29 @@ export default function Home() {
         )}
       </div>
 
-      {/* ── Action cards — always visible, side by side ───── */}
-      <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 mb-6 sm:mb-8 animate-in" style={{ animationDelay: '0.03s' }}>
-        {/* Create card */}
+      {/* ── Action cards — Create is primary, Join is secondary ─ */}
+      <div className="grid gap-3 sm:gap-4 sm:grid-cols-[1.15fr_0.85fr] mb-6 sm:mb-8 animate-in" style={{ animationDelay: '0.03s' }}>
+        {/* Create card — primary CTA */}
         <div
-          className={`rounded-xl border transition-all overflow-hidden ${
+          className={`rounded-xl border-2 transition-all overflow-hidden relative ${
             activePanel === 'create'
-              ? 'border-pov-accent/40 bg-pov-surface shadow-lg shadow-pov-accent/5'
-              : 'border-pov-border bg-pov-surface hover:border-pov-accent/20'
+              ? 'border-pov-accent/50 bg-pov-surface shadow-lg shadow-pov-accent/10'
+              : 'border-pov-accent/25 bg-pov-surface hover:border-pov-accent/40 hover:shadow-md hover:shadow-pov-accent/10'
           }`}
         >
+          {/* Subtle glow behind card */}
+          <div className="absolute -top-12 -right-12 w-32 h-32 bg-pov-accent/[0.08] rounded-full blur-3xl pointer-events-none" />
           <button
             onClick={() => togglePanel('create')}
-            className="w-full flex items-center gap-4 p-5 text-left"
+            className="w-full flex items-center gap-4 p-5 sm:p-6 text-left relative z-10"
           >
-            <div className="w-12 h-12 rounded-xl bg-pov-accent/10 flex items-center justify-center text-pov-accent flex-shrink-0">
-              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <div className="w-14 h-14 rounded-xl bg-pov-accent/15 flex items-center justify-center text-pov-accent flex-shrink-0 ring-1 ring-pov-accent/20">
+              <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
               </svg>
             </div>
             <div className="min-w-0">
-              <p className="font-semibold text-pov-text text-sm">Create Session</p>
+              <p className="font-bold text-pov-text text-base">Create Session</p>
               <p className="text-xs text-pov-muted mt-0.5">Start hosting with your YouTube or Twitch stream</p>
             </div>
           </button>
@@ -437,6 +459,16 @@ export default function Home() {
           {activePanel === 'create' && (
             <div className="px-5 pb-5 border-t border-pov-border/50 pt-4 animate-in">
               <form onSubmit={handleCreate} className="space-y-3">
+                <div>
+                  <input
+                    type="text"
+                    value={sessionTitle}
+                    onChange={(e) => setSessionTitle(e.target.value)}
+                    placeholder="Session title (optional)"
+                    maxLength={80}
+                    className="w-full bg-pov-bg border border-pov-border rounded-lg px-4 py-2.5 text-sm text-pov-text placeholder:text-pov-muted/40 focus:outline-none focus:border-pov-accent transition-colors"
+                  />
+                </div>
                 <div>
                   <input
                     type="url"
@@ -520,133 +552,9 @@ export default function Home() {
         </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr] mb-6 sm:mb-8 animate-in" style={{ animationDelay: '0.045s' }}>
-        <div className="bg-pov-surface border border-pov-border rounded-xl p-4 sm:p-5">
-          <div className="flex items-center justify-between gap-3 mb-3">
-            <div>
-              <p className="text-[10px] font-mono text-pov-accent uppercase tracking-wider">Discover People</p>
-              <p className="text-sm text-pov-muted mt-1">Find friends again by display name and follow them for quick access.</p>
-            </div>
-            <span className="text-[10px] font-mono text-pov-muted bg-pov-bg border border-pov-border rounded-full px-2.5 py-1">
-              {followingIds.length} following
-            </span>
-          </div>
-
-          <div className="space-y-3">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search display names"
-              className="w-full bg-pov-bg border border-pov-border rounded-lg px-4 py-2.5 text-sm text-pov-text placeholder:text-pov-muted/40 focus:outline-none focus:border-pov-accent transition-colors"
-            />
-
-            {searchQuery.trim().length > 0 && (
-              <div className="rounded-xl border border-pov-border/60 bg-pov-bg/40 p-3">
-                {searchLoading ? (
-                  <p className="text-xs text-pov-muted">Searching people…</p>
-                ) : searchError ? (
-                  <p className="text-xs text-pov-danger">{searchError}</p>
-                ) : searchResults.length > 0 ? (
-                  <div className="space-y-2">
-                    {searchResults.map((result) => {
-                      const isFollowing = followingIdSet.has(result.id);
-                      return (
-                        <div key={result.id} className="flex items-center justify-between gap-3 rounded-lg border border-pov-border/60 bg-pov-surface/60 px-3 py-2.5">
-                          <Link to={`/profile/${result.id}`} className="min-w-0 flex flex-1 items-center gap-3">
-                            <Avatar profile={result} size="sm" />
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-medium text-pov-text hover:text-pov-accent transition-colors">{result.display_name}</p>
-                              <p className="text-[11px] text-pov-muted">Member since {memberSince(result.created_at)}</p>
-                            </div>
-                          </Link>
-                          <FollowButton
-                            compact
-                            busy={socialBusyUserId === result.id}
-                            isFollowing={isFollowing}
-                            onClick={() => handleToggleFollow(result.id, !isFollowing)}
-                          />
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : searchQuery.trim().length >= 2 ? (
-                  <p className="text-xs text-pov-muted">No matching people yet. Try another display name.</p>
-                ) : (
-                  <p className="text-xs text-pov-muted">Type at least 2 characters to search.</p>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="bg-pov-surface border border-pov-border rounded-xl p-4 sm:p-5">
-          <div className="flex items-center justify-between gap-3 mb-3">
-            <div>
-              <p className="text-[10px] font-mono text-pov-success uppercase tracking-wider">Following</p>
-              <p className="text-sm text-pov-muted mt-1">People you follow show up here and power your live + VOD feed.</p>
-            </div>
-          </div>
-
-          {followingProfiles.length > 0 ? (
-            <div className="space-y-2">
-              {followingProfiles.map((profileItem) => (
-                <Link
-                  key={profileItem.id}
-                  to={`/profile/${profileItem.id}`}
-                  className="flex items-center justify-between gap-3 rounded-lg border border-pov-border/60 bg-pov-bg/40 px-3 py-2.5 hover:border-pov-accent/20 transition-colors"
-                >
-                  <div className="min-w-0 flex items-center gap-3">
-                    <Avatar profile={profileItem} size="sm" />
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-pov-text">{profileItem.display_name}</p>
-                      <p className="text-[11px] text-pov-muted">Open profile</p>
-                    </div>
-                  </div>
-                  <span className="text-xs font-mono text-pov-accent">→</span>
-                </Link>
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-xl border border-dashed border-pov-border px-4 py-6 text-center text-sm text-pov-muted">
-              Follow a few friends to build your rediscoverable feed.
-            </div>
-          )}
-
-          {socialError && (
-            <p className="mt-3 text-xs text-pov-danger">{socialError}</p>
-          )}
-        </div>
-      </div>
-
-      {followingLiveSessions.length > 0 && (
-        <div className="mb-8 animate-in" style={{ animationDelay: '0.07s' }}>
-          <h2 className="text-xs font-mono text-pov-success uppercase tracking-wider mb-3 flex items-center gap-2">
-            <span className="live-dot w-1.5 h-1.5 rounded-full bg-pov-success" />
-            Following Live Now
-          </h2>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {followingLiveSessions.map((session) => (
-              <LiveSessionCard key={`following-live-${session.id}`} session={session} userId={user.id} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {followingRecentSessions.length > 0 && (
-        <div className="mb-8 animate-in" style={{ animationDelay: '0.085s' }}>
-          <h2 className="text-xs font-mono text-pov-accent uppercase tracking-wider mb-3">Following VODs</h2>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {followingRecentSessions.map((session) => (
-              <RecentSessionCard key={`following-vod-${session.id}`} session={session} userId={user.id} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ── Live sessions — full-width attention-grabbing ─── */}
+      {/* ── Your Live Sessions — personal content first ───── */}
       {hasLive && (
-        <div className="mb-8 animate-in" style={{ animationDelay: '0.06s' }}>
+        <div className="mb-6 sm:mb-8 animate-in" style={{ animationDelay: '0.04s' }}>
           <h2 className="text-xs font-mono text-pov-success uppercase tracking-wider mb-3 flex items-center gap-2">
             <span className="live-dot w-1.5 h-1.5 rounded-full bg-pov-success" />
             Your Live Sessions
@@ -661,7 +569,7 @@ export default function Home() {
 
       {/* ── Recent sessions — grid of cards ──────────────── */}
       {hasRecent && (
-        <div className="mb-6 sm:mb-8 animate-in" style={{ animationDelay: '0.09s' }}>
+        <div className="mb-6 sm:mb-8 animate-in" style={{ animationDelay: '0.055s' }}>
           <h2 className="text-xs font-mono text-pov-muted uppercase tracking-wider mb-3">Recent Sessions</h2>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {recentSessions.map((s) => (
@@ -671,9 +579,9 @@ export default function Home() {
         </div>
       )}
 
-      {/* ── Quick tips — fills space when no sessions ─────── */}
+      {/* ── Get Started — visible when no sessions, even when Create/Join is open ── */}
       {isEmpty && (
-        <div className="animate-in" style={{ animationDelay: '0.06s' }}>
+        <div className="animate-in mb-6 sm:mb-8" style={{ animationDelay: '0.04s' }}>
           {/* Big CTA empty state */}
           <div className="text-center py-10 sm:py-12 mb-8">
             <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-pov-accent/10 border border-pov-accent/20 flex items-center justify-center">
@@ -693,7 +601,7 @@ export default function Home() {
             </button>
           </div>
 
-          {/* Feature highlights to fill the space */}
+          {/* Feature highlights */}
           <div className="grid sm:grid-cols-3 gap-4">
             {[
               { icon: '🎯', title: 'Perfect Sync', desc: 'UTC-based sync keeps everyone on the same frame' },
@@ -709,6 +617,165 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* ── Social Feed — collapsible, below personal content ── */}
+      <div className="mb-6 sm:mb-8 animate-in" style={{ animationDelay: '0.07s' }}>
+        {/* Section toggle header */}
+        <button
+          onClick={() => setShowSocial((v) => !v)}
+          className="w-full flex items-center gap-3 mb-4 group text-left"
+        >
+          <svg
+            className={`w-3.5 h-3.5 text-pov-muted transition-transform duration-200 ${showSocial ? 'rotate-0' : '-rotate-90'}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+          <h2 className="text-xs font-mono text-pov-muted uppercase tracking-wider group-hover:text-pov-text transition-colors">
+            Social Feed
+          </h2>
+          {hasSocialContent && (
+            <span className="text-[10px] font-mono text-pov-accent bg-pov-accent/10 rounded-full px-2 py-0.5">
+              {followingIds.length} following
+              {followingLiveSessions.length > 0 && ` · ${followingLiveSessions.length} live`}
+            </span>
+          )}
+          {!hasSocialContent && (
+            <span className="text-[10px] text-pov-muted/60">Find friends & see their streams</span>
+          )}
+        </button>
+
+        {showSocial && (
+          <div className="space-y-6 animate-in">
+            {/* Following Live Now */}
+            {followingLiveSessions.length > 0 && (
+              <div>
+                <h3 className="text-xs font-mono text-pov-success uppercase tracking-wider mb-3 flex items-center gap-2">
+                  <span className="live-dot w-1.5 h-1.5 rounded-full bg-pov-success" />
+                  Following Live Now
+                </h3>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {followingLiveSessions.map((session) => (
+                    <LiveSessionCard key={`following-live-${session.id}`} session={session} userId={user.id} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Following VODs */}
+            {followingRecentSessions.length > 0 && (
+              <div>
+                <h3 className="text-xs font-mono text-pov-accent uppercase tracking-wider mb-3">Following VODs</h3>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {followingRecentSessions.map((session) => (
+                    <RecentSessionCard key={`following-vod-${session.id}`} session={session} userId={user.id} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Discover People + Following — two-column grid */}
+            <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+              <div className="bg-pov-surface border border-pov-border rounded-xl p-4 sm:p-5">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div>
+                    <p className="text-[10px] font-mono text-pov-accent uppercase tracking-wider">Discover People</p>
+                    <p className="text-sm text-pov-muted mt-1">Find friends by display name and follow them.</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    placeholder="Search display names"
+                    className="w-full bg-pov-bg border border-pov-border rounded-lg px-4 py-2.5 text-sm text-pov-text placeholder:text-pov-muted/40 focus:outline-none focus:border-pov-accent transition-colors"
+                  />
+
+                  {searchQuery.trim().length > 0 && (
+                    <div className="rounded-xl border border-pov-border/60 bg-pov-bg/40 p-3">
+                      {searchLoading ? (
+                        <p className="text-xs text-pov-muted">Searching people…</p>
+                      ) : searchError ? (
+                        <p className="text-xs text-pov-danger">{searchError}</p>
+                      ) : searchResults.length > 0 ? (
+                        <div className="space-y-2">
+                          {searchResults.map((result) => {
+                            const isFollowing = followingIdSet.has(result.id);
+                            return (
+                              <div key={result.id} className="flex items-center justify-between gap-3 rounded-lg border border-pov-border/60 bg-pov-surface/60 px-3 py-2.5">
+                                <Link to={`/profile/${result.id}`} className="min-w-0 flex flex-1 items-center gap-3">
+                                  <Avatar profile={result} size="sm" />
+                                  <div className="min-w-0">
+                                    <p className="truncate text-sm font-medium text-pov-text hover:text-pov-accent transition-colors">{result.display_name}</p>
+                                    <p className="text-[11px] text-pov-muted">Member since {memberSince(result.created_at)}</p>
+                                  </div>
+                                </Link>
+                                <FollowButton
+                                  compact
+                                  busy={socialBusyUserId === result.id}
+                                  isFollowing={isFollowing}
+                                  onClick={() => handleToggleFollow(result.id, !isFollowing)}
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : searchQuery.trim().length >= 2 ? (
+                        <p className="text-xs text-pov-muted">No matching people yet. Try another display name.</p>
+                      ) : (
+                        <p className="text-xs text-pov-muted">Type at least 2 characters to search.</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-pov-surface border border-pov-border rounded-xl p-4 sm:p-5">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div>
+                    <p className="text-[10px] font-mono text-pov-success uppercase tracking-wider">Following</p>
+                    <p className="text-sm text-pov-muted mt-1">People you follow power your live + VOD feed.</p>
+                  </div>
+                  <span className="text-[10px] font-mono text-pov-muted bg-pov-bg border border-pov-border rounded-full px-2.5 py-1">
+                    {followingIds.length}
+                  </span>
+                </div>
+
+                {followingProfiles.length > 0 ? (
+                  <div className="space-y-2">
+                    {followingProfiles.map((profileItem) => (
+                      <Link
+                        key={profileItem.id}
+                        to={`/profile/${profileItem.id}`}
+                        className="flex items-center justify-between gap-3 rounded-lg border border-pov-border/60 bg-pov-bg/40 px-3 py-2.5 hover:border-pov-accent/20 transition-colors"
+                      >
+                        <div className="min-w-0 flex items-center gap-3">
+                          <Avatar profile={profileItem} size="sm" />
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-pov-text">{profileItem.display_name}</p>
+                            <p className="text-[11px] text-pov-muted">Open profile</p>
+                          </div>
+                        </div>
+                        <span className="text-xs font-mono text-pov-accent">→</span>
+                      </Link>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-pov-border px-4 py-6 text-center text-sm text-pov-muted">
+                    Follow a few friends to build your feed.
+                  </div>
+                )}
+
+                {socialError && (
+                  <p className="mt-3 text-xs text-pov-danger">{socialError}</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -802,7 +869,7 @@ function LiveSessionCard({ session, userId }) {
 
         <div className="flex items-center justify-between">
           <span className="text-xs text-pov-muted font-mono truncate max-w-[70%]">
-            {isHost ? 'You are hosting' : `Hosted by ${hostName}`}
+            {session.title || (isHost ? 'You are hosting' : `Hosted by ${hostName}`)}
           </span>
           <span className="text-xs text-pov-accent opacity-0 group-hover:opacity-100 transition-opacity font-medium">
             Rejoin →
@@ -865,7 +932,7 @@ function RecentSessionCard({ session, userId }) {
 
       {/* Session info */}
       <p className="text-sm text-pov-text font-medium group-hover:text-pov-accent transition-colors truncate mb-1">
-        {streams.map((s) => s.display_name).join(', ') || 'Session'}
+        {session.title || streams.map((s) => s.display_name).join(', ') || 'Session'}
       </p>
       <p className="text-[11px] text-pov-muted font-mono">
         {streams.length} POV{streams.length !== 1 ? 's' : ''}

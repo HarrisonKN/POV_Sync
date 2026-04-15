@@ -40,7 +40,6 @@ export const OFFSET_STEPS = {
   FRAME: 1 / 60,     // ~0.0167s
   FINE: 1,            // 1s
   MEDIUM: 5,          // 5s
-  COARSE: 30,         // 30s
 };
 
 // Limits

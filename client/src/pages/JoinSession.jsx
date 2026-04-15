@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase';
 import ErrorState from '../components/ErrorState';
 import SessionResumeCard from '../components/SessionResumeCard';
 import SessionRoomHeader from '../components/SessionRoomHeader';
+import JoinSkeleton from '../components/JoinSkeleton';
 
 // Extract a bare join code from either a raw code or a full participant URL
 function parseJoinCode(input) {
@@ -147,11 +148,7 @@ export default function JoinSession() {
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="w-8 h-8 border-2 border-pov-accent border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
+    return <JoinSkeleton />;
   }
 
   if (!code) {

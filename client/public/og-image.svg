@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#16141e"/>
+      <stop offset="100%" stop-color="#1e1a2e"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#a78bfa"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <!-- Decorative play icons -->
+  <polygon points="440,215 440,415 540,315" fill="url(#accent)" opacity=".7"/>
+  <polygon points="490,215 490,415 590,315" fill="url(#accent)" opacity=".4"/>
+  <!-- Title -->
+  <text x="600" y="290" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-weight="700" font-size="72" fill="#e8e4ef">POV Sync</text>
+  <!-- Tagline -->
+  <text x="600" y="360" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-weight="400" font-size="28" fill="#9b93ab">Watch every angle in perfect sync</text>
+  <!-- Accent bar -->
+  <rect x="475" y="390" width="250" height="4" rx="2" fill="url(#accent)" opacity=".6"/>
+</svg>

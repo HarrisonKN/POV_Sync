@@ -35,10 +35,13 @@ export async function searchUsersByName(query, excludeUserId) {
   const trimmed = query.trim();
   if (trimmed.length < 2) return [];
 
+  // Escape LIKE wildcards so user input like '%' or '_' is treated literally
+  const escaped = trimmed.replace(/[%_\\]/g, (ch) => `\\${ch}`);
+
   const { data, error } = await supabase
     .from('users')
     .select(USER_CARD_SELECT)
-    .ilike('display_name', `%${trimmed}%`)
+    .ilike('display_name', `%${escaped}%`)
     .order('display_name', { ascending: true })
     .limit(8);
 

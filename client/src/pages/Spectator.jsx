@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { useParams } from 'react-router-dom';
+import { useParams, useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import StreamPlayer from '../components/StreamPlayer';
 import StatusIndicators from '../components/StatusIndicators';
 import ErrorState from '../components/ErrorState';
 import PlaybackControls from '../components/PlaybackControls';
+import SessionSkeleton from '../components/SessionSkeleton';
 
 const ROOM_TILE_MIN_WIDTH = 180;
 const ROOM_TILE_MAX_WIDTH = 840;
@@ -18,6 +19,8 @@ const VIEW_MODE_OPTIONS = [
 
 export default function Spectator() {
   const { code } = useParams();
+  const location = useLocation();
+  const povUserId = useMemo(() => new URLSearchParams(location.search).get('pov'), [location.search]);
   const [session, setSession] = useState(null);
   const [streams, setStreams] = useState([]);
   const [mainStreamId, setMainStreamId] = useState(null);
@@ -74,6 +77,7 @@ export default function Spectator() {
   const syncingRef = useRef(false);
   const wsRef = useRef(null);
   const lastSeekTs = useRef(0);
+  const localOverrideStreamIdRef = useRef(null);
   const SEEK_COOLDOWN_MS = 4000;
   const cycleHideTimerRef = useRef(null);
   const cycleTouchStartRef = useRef(null);
@@ -147,6 +151,15 @@ export default function Spectator() {
     }
   }, [cycleHoverStreamId, visibleStreams]);
 
+  useEffect(() => {
+    if (
+      localOverrideStreamIdRef.current &&
+      !visibleStreams.some((stream) => stream.id === localOverrideStreamIdRef.current)
+    ) {
+      localOverrideStreamIdRef.current = null;
+    }
+  }, [visibleStreams]);
+
   // Fetch session on mount
   useEffect(() => {
     async function fetchSession() {
@@ -164,7 +177,8 @@ export default function Spectator() {
         setOffsets(offsetMap);
 
         const anchor = fetchedStreams.find((s) => s.is_anchor);
-        setMainStreamId(anchor?.id || fetchedStreams[0]?.id || null);
+        const povStream = povUserId && fetchedStreams.find((s) => s.user_id === povUserId);
+        setMainStreamId(povStream?.id || anchor?.id || fetchedStreams[0]?.id || null);
       } catch (err) {
         setError(err.message);
       } finally {
@@ -236,59 +250,66 @@ export default function Spectator() {
     if (!session?.id) return;
 
     let active = true;
+    let reconnectTimer = null;
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsHost = import.meta.env.VITE_WS_URL || `${wsProtocol}//${window.location.hostname}:3002`;
-    const ws = new WebSocket(`${wsHost}/ws?sessionId=${session.id}&role=spectator`);
-    wsRef.current = ws;
 
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
+    function connect() {
+      if (!active) return;
+      const ws = new WebSocket(`${wsHost}/ws?sessionId=${session.id}&role=spectator`);
+      wsRef.current = ws;
 
-        if (msg.type === 'SYNC_OFFSETS') {
-          setSyncStats({
-            offsets: msg.offsets || {},
-            confidence: msg.confidence || {},
-            startTimesAvailable: msg.startTimesAvailable || {},
-            anchorStreamId: msg.anchorStreamId ?? null,
-            timestamp: msg.timestamp ?? null,
-          });
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
 
-          setOffsets((prev) => ({
-            ...prev,
-            ...(msg.offsets || {}),
-          }));
+          if (msg.type === 'SYNC_OFFSETS') {
+            setSyncStats({
+              offsets: msg.offsets || {},
+              confidence: msg.confidence || {},
+              startTimesAvailable: msg.startTimesAvailable || {},
+              anchorStreamId: msg.anchorStreamId ?? null,
+              timestamp: msg.timestamp ?? null,
+            });
+
+            setOffsets((prev) => ({
+              ...prev,
+              ...(msg.offsets || {}),
+            }));
+          }
+
+          if (msg.type === 'ANCHOR_REMOVED') {
+            setSyncStats((prev) => ({ ...(prev || {}), anchorRemoved: true }));
+          }
+        } catch (err) {
+          console.error('[WS] Spectator message parse error:', err);
         }
+      };
 
-        if (msg.type === 'ANCHOR_REMOVED') {
-          setSyncStats((prev) => ({ ...(prev || {}), anchorRemoved: true }));
+      ws.onerror = (err) => {
+        console.error('[WS] Spectator error:', err);
+      };
+
+      ws.onclose = () => {
+        if (wsRef.current === ws) {
+          wsRef.current = null;
         }
-      } catch (err) {
-        console.error('[WS] Spectator message parse error:', err);
-      }
-    };
+        if (active) {
+          console.log('[WS] Spectator disconnected, reconnecting in 3s...');
+          reconnectTimer = setTimeout(connect, 3000);
+        }
+      };
+    }
 
-    ws.onerror = (err) => {
-      console.error('[WS] Spectator error:', err);
-    };
-
-    ws.onclose = () => {
-      if (wsRef.current === ws) {
-        wsRef.current = null;
-      }
-      if (active) {
-        console.log('[WS] Spectator disconnected');
-      }
-    };
+    connect();
 
     return () => {
       active = false;
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.close();
+      clearTimeout(reconnectTimer);
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.close();
       }
-      if (wsRef.current === ws) {
-        wsRef.current = null;
-      }
+      wsRef.current = null;
     };
   }, [session?.id]);
 
@@ -336,48 +357,54 @@ export default function Spectator() {
   }, []);
 
   const handleGoLiveLocal = useCallback(() => {
+    if (!mainStreamId) return;
+
     syncingRef.current = true;
     lastSeekTs.current = Date.now();
+    localOverrideStreamIdRef.current = mainStreamId;
 
-    streamsRef.current.forEach((stream) => {
-      const stagePlayer = playerRefs.current[stream.id];
-      const filmPlayer = playerRefs.current[`film-${stream.id}`];
-      const offset = offsetsRef.current[stream.id] ?? 0;
+    const stagePlayer = playerRefs.current[mainStreamId];
+    const filmPlayer = playerRefs.current[`film-${mainStreamId}`];
+    const offset = offsetsRef.current[mainStreamId] ?? 0;
 
-      try {
-        const duration = stagePlayer?.getDuration?.() ?? filmPlayer?.getDuration?.() ?? 0;
-        const liveEdge = duration > 0 ? duration : 9999999;
-        const target = Math.max(0, liveEdge - offset);
-        stagePlayer?.seekTo?.(target, true);
-        filmPlayer?.seekTo?.(target, true);
-      } catch (_) {}
-    });
+    try {
+      const duration = stagePlayer?.getDuration?.() ?? filmPlayer?.getDuration?.() ?? 0;
+      const liveEdge = duration > 0 ? duration : 9999999;
+      const target = Math.max(0, liveEdge - offset);
+      (stagePlayer ?? filmPlayer)?.seekTo?.(target, true);
+    } catch (_) {}
 
     syncingRef.current = false;
-  }, []);
+  }, [mainStreamId]);
 
   const handleResyncLocal = useCallback(() => {
+    if (!mainStreamId) return;
+
+    localOverrideStreamIdRef.current = null;
+
     const anchor = streamsRef.current.find((stream) => stream.is_anchor);
-    const anchorPlayer = anchor ? playerRefs.current[anchor.id] : null;
+    const anchorPlayer = anchor
+      ? (anchor.id === mainStreamId
+          ? (playerRefs.current[`film-${anchor.id}`] ?? playerRefs.current[anchor.id])
+          : playerRefs.current[anchor.id])
+      : null;
     const anchorTime = anchorPlayer?.getCurrentTime?.() ?? 0;
 
     if (!anchor || !Number.isFinite(anchorTime) || anchorTime <= 0) {
-      handleGoLiveLocal();
+      syncMirroredPair(mainStreamId, `film-${mainStreamId}`, 0);
       return;
     }
 
     syncingRef.current = true;
     lastSeekTs.current = Date.now();
 
-    streamsRef.current.forEach((stream) => {
-      const offset = offsetsRef.current[stream.id] ?? 0;
-      const target = Math.max(0, anchorTime - offset);
-      try { playerRefs.current[stream.id]?.seekTo?.(target, true); } catch (_) {}
-      try { playerRefs.current[`film-${stream.id}`]?.seekTo?.(target, true); } catch (_) {}
-    });
+    const offset = offsetsRef.current[mainStreamId] ?? 0;
+    const target = Math.max(0, anchorTime - (mainStreamId === anchor.id ? 0 : offset));
+    try { playerRefs.current[mainStreamId]?.seekTo?.(target, true); } catch (_) {}
+    try { playerRefs.current[`film-${mainStreamId}`]?.seekTo?.(target, true); } catch (_) {}
 
     syncingRef.current = false;
-  }, [handleGoLiveLocal]);
+  }, [mainStreamId, syncMirroredPair]);
 
   const handleLocalPlaybackStep = useCallback((deltaSeconds) => {
     if (!mainStreamId) return;
@@ -392,8 +419,8 @@ export default function Spectator() {
     const targetTime = Math.max(0, currentTime + deltaSeconds);
     syncingRef.current = true;
     lastSeekTs.current = Date.now();
-    try { stagePlayer?.seekTo?.(targetTime, true); } catch (_) {}
-    try { filmPlayer?.seekTo?.(targetTime, true); } catch (_) {}
+    localOverrideStreamIdRef.current = mainStreamId;
+    try { (stagePlayer ?? filmPlayer)?.seekTo?.(targetTime, true); } catch (_) {}
     syncingRef.current = false;
   }, [mainStreamId]);
 
@@ -415,6 +442,7 @@ export default function Spectator() {
       if (Date.now() - lastSeekTs.current < SEEK_COOLDOWN_MS) return;
 
       streamsRef.current.forEach((stream) => {
+        if (stream.id === localOverrideStreamIdRef.current) return;
         const preferredPlayerId = stream.id === mainStreamId ? stream.id : `film-${stream.id}`;
         syncMirroredPair(stream.id, preferredPlayerId, PAIR_DRIFT_THRESHOLD);
       });
@@ -422,7 +450,11 @@ export default function Spectator() {
       if (sessionRef.current?.status === 'ended') return;
 
       const anchor = streamsRef.current.find((stream) => stream.is_anchor);
-      const anchorPlayer = anchor ? playerRefs.current[anchor.id] : null;
+      const anchorPlayer = anchor
+        ? (anchor.id === localOverrideStreamIdRef.current
+            ? (playerRefs.current[`film-${anchor.id}`] ?? playerRefs.current[anchor.id])
+            : playerRefs.current[anchor.id])
+        : null;
       if (!anchor || !anchorPlayer || typeof anchorPlayer.getCurrentTime !== 'function') return;
 
       let anchorTime;
@@ -444,12 +476,13 @@ export default function Spectator() {
 
       streamsRef.current.forEach((stream) => {
         if (stream.id === anchor.id) return;
+        const isLocalOverride = stream.id === localOverrideStreamIdRef.current;
         const offset = offsetsRef.current[stream.id] ?? 0;
         const expected = Math.max(0, anchorTime - offset);
 
         try {
           const stagePlayer = playerRefs.current[stream.id];
-          if (stagePlayer) {
+          if (stagePlayer && !isLocalOverride) {
             const stageTime = stagePlayer.getCurrentTime?.() ?? 0;
             if (Math.abs(stageTime - expected) > DRIFT_SEEK_THRESHOLD) {
               stagePlayer.seekTo?.(expected, true);
@@ -530,6 +563,7 @@ export default function Spectator() {
 
   const handleSwapStream = useCallback((newStreamId) => {
     if (newStreamId === mainStreamId) return;
+    localOverrideStreamIdRef.current = null;
     syncMirroredPair(newStreamId, `film-${newStreamId}`);
     setMainStreamId(newStreamId);
   }, [mainStreamId, syncMirroredPair]);
@@ -565,11 +599,7 @@ export default function Spectator() {
   // ── Early returns (all hooks are declared above) ────────────────────────────
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="w-8 h-8 border-2 border-pov-accent border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
+    return <SessionSkeleton />;
   }
 
   if (error) {
@@ -613,7 +643,7 @@ export default function Spectator() {
                   {VIEW_MODE_OPTIONS.find((mode) => mode.id === viewMode)?.shortLabel || 'Stage'}
                 </span>
               </div>
-              <h1 className="text-lg sm:text-xl font-bold tracking-tight text-pov-text">Spectator room</h1>
+              <h1 className="text-lg sm:text-xl font-bold tracking-tight text-pov-text">{session?.title || 'Spectator room'}</h1>
               <p className="mt-1 text-xs sm:text-sm leading-relaxed text-pov-muted">
                 {isRoomHeaderCollapsed
                   ? `${hostName} · ${session?.spectator_link || session?.id?.slice(0, 8) || 'session'}`
@@ -788,6 +818,8 @@ export default function Spectator() {
           onGoLive={handleGoLiveLocal}
           onResync={handleResyncLocal}
           showLiveActions={session?.status === 'live'}
+          goLiveLabel="Go live (local POV)"
+          resyncLabel="Re-sync to room"
         />
       )}
 

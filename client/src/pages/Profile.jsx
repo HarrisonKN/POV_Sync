@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase';
 import SessionResumeCard from '../components/SessionResumeCard';
 import FollowButton from '../components/FollowButton';
 import { fetchFollowLists, fetchProfileSessions, followUser, unfollowUser } from '../lib/social';
+import ProfileSkeleton from '../components/ProfileSkeleton';
 
 const MAX_AVATAR_PIPS = 4;
 const TABS = ['All', 'Hosted', 'Joined', 'VODs'];
@@ -94,11 +95,7 @@ export default function Profile() {
   }, [isOwnProfile, loadNetwork, network.viewerFollowsTarget, targetUserId, user?.id]);
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="w-8 h-8 border-2 border-pov-accent border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
+    return <ProfileSkeleton />;
   }
 
   if (!profile) {

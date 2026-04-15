@@ -132,6 +132,22 @@ body::before {
 }
 .live-dot { animation: live-pulse 2s ease-in-out infinite; }
 
+/* Skeleton shimmer */
+@keyframes skeleton-shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position:  400px 0; }
+}
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgb(var(--pov-surface) / 0.7) 0%,
+    rgb(var(--pov-border)  / 0.55) 40%,
+    rgb(var(--pov-surface) / 0.7) 80%
+  );
+  background-size: 800px 100%;
+  animation: skeleton-shimmer 1.6s ease-in-out infinite;
+}
+
 /* Gradient text helper */
 .text-gradient {
   background: linear-gradient(135deg, rgb(var(--pov-accent)), rgb(var(--pov-success)));

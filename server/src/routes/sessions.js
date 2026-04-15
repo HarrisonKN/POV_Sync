@@ -7,11 +7,172 @@ import { broadcastToSession, setControlDelegation } from '../websocket/index.js'
 
 const router = Router();
 
+async function finalizeSessionEnd(sessionId) {
+  const nowIso = new Date().toISOString();
+
+  const { data: allStreams, error: streamsError } = await supabaseAdmin
+    .from('streams')
+    .select('id, is_anchor, youtube_start_time, is_active')
+    .eq('session_id', sessionId);
+
+  if (streamsError) throw streamsError;
+
+  const anchor = allStreams?.find((stream) => stream.is_anchor);
+  if (anchor?.youtube_start_time && allStreams?.length > 0) {
+    const anchorStart = anchor.youtube_start_time;
+    for (const stream of allStreams) {
+      if (stream.id === anchor.id) continue;
+      if (stream.youtube_start_time) {
+        const offset = Math.round((stream.youtube_start_time - anchorStart) * 100) / 100;
+        await supabaseAdmin
+          .from('streams')
+          .update({ offset_seconds: offset })
+          .eq('id', stream.id);
+        console.log(`[API] Saved VOD offset for stream ${stream.id.slice(0, 8)}: ${offset}s`);
+      }
+    }
+  }
+
+  const { error: updateError } = await supabaseAdmin
+    .from('sessions')
+    .update({
+      status: 'ended',
+      ended_at: nowIso,
+      vod_ready_at: nowIso,
+    })
+    .eq('id', sessionId)
+    .neq('status', 'ended');
+
+  if (updateError) throw updateError;
+
+  syncManager.stopSession(sessionId);
+
+  return { endedAt: nowIso, streamCount: allStreams?.length ?? 0 };
+}
+
+async function autoEndSessionIfNoActiveStreams(sessionId) {
+  const { data: session, error: sessionError } = await supabaseAdmin
+    .from('sessions')
+    .select('id, status')
+    .eq('id', sessionId)
+    .single();
+
+  if (sessionError || !session || session.status === 'ended') {
+    return { ended: false, reason: 'session-unavailable' };
+  }
+
+  const { count, error: activeCountError } = await supabaseAdmin
+    .from('streams')
+    .select('id', { count: 'exact', head: true })
+    .eq('session_id', sessionId)
+    .eq('is_active', true);
+
+  if (activeCountError) throw activeCountError;
+
+  if ((count ?? 0) > 0) {
+    return { ended: false, reason: 'streams-still-active', activeCount: count ?? 0 };
+  }
+
+  const result = await finalizeSessionEnd(sessionId);
+  console.log(`[API] Auto-ended session ${sessionId} after all streams became inactive`);
+  return { ended: true, ...result };
+}
+
+async function archiveStreamAndMaybeFinalizeSession(sessionId, streamId) {
+  const nowIso = new Date().toISOString();
+
+  const { data: stream, error: streamError } = await supabaseAdmin
+    .from('streams')
+    .select('id, session_id, is_anchor, is_active, left_at')
+    .eq('id', streamId)
+    .eq('session_id', sessionId)
+    .single();
+
+  if (streamError || !stream) {
+    return { found: false, archived: false, sessionEnded: false };
+  }
+
+  if (stream.is_active !== false) {
+    const { error: archiveError } = await supabaseAdmin
+      .from('streams')
+      .update({
+        is_active: false,
+        is_anchor: false,
+        left_at: stream.left_at || nowIso,
+      })
+      .eq('id', stream.id);
+
+    if (archiveError) throw archiveError;
+
+    syncManager.removeStream(sessionId, stream.id);
+  }
+
+  let promotedAnchorStreamId = null;
+  if (stream.is_anchor) {
+    const { data: replacementStream, error: replacementError } = await supabaseAdmin
+      .from('streams')
+      .select('id')
+      .eq('session_id', sessionId)
+      .eq('is_active', true)
+      .order('joined_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (replacementError) throw replacementError;
+
+    if (replacementStream?.id) {
+      promotedAnchorStreamId = replacementStream.id;
+      const { error: clearAnchorError } = await supabaseAdmin
+        .from('sessions')
+        .update({ anchor_stream_id: replacementStream.id })
+        .eq('id', sessionId);
+
+      if (clearAnchorError) throw clearAnchorError;
+
+      const { error: markAnchorError } = await supabaseAdmin
+        .from('streams')
+        .update({ is_anchor: true })
+        .eq('id', replacementStream.id)
+        .eq('session_id', sessionId);
+
+      if (markAnchorError) throw markAnchorError;
+
+      syncManager.promoteAnchor(sessionId, replacementStream.id);
+      broadcastToSession(sessionId, {
+        type: 'ANCHOR_AUTO_PROMOTED',
+        sessionId,
+        streamId: replacementStream.id,
+      });
+    } else {
+      const { error: clearAnchorError } = await supabaseAdmin
+        .from('sessions')
+        .update({ anchor_stream_id: null })
+        .eq('id', sessionId);
+
+      if (clearAnchorError) throw clearAnchorError;
+    }
+  }
+
+  const autoEndResult = await autoEndSessionIfNoActiveStreams(sessionId);
+  return {
+    found: true,
+    archived: stream.is_active !== false,
+    promotedAnchorStreamId,
+    sessionEnded: autoEndResult.ended === true,
+  };
+}
+
 // ── Param validators ──────────────────────────────────────────────────────────
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 router.param('id', (req, res, next, id) => {
   if (!UUID_RE.test(id)) {
     return res.status(400).json({ error: 'Invalid session ID format' });
+  }
+  next();
+});
+router.param('streamId', (req, res, next, streamId) => {
+  if (!UUID_RE.test(streamId)) {
+    return res.status(400).json({ error: 'Invalid stream ID format' });
   }
   next();
 });
@@ -63,6 +224,9 @@ router.post('/', requireAuth, async (req, res) => {
     // Use authenticated client so RLS passes (auth.uid() = host_id)
     const db = req.supabase;
 
+    // Optional session title (trimmed, max 80 chars)
+    const title = typeof req.body.title === 'string' ? req.body.title.trim().slice(0, 80) || null : null;
+
     // Create the session
     console.log('[API] Inserting session...');
     const { data: session, error: sessionError } = await db
@@ -72,6 +236,7 @@ router.post('/', requireAuth, async (req, res) => {
         participant_link: participantLink,
         spectator_link: spectatorLink,
         status: 'live',
+        ...(title && { title }),
       })
       .select()
       .single();
@@ -167,7 +332,7 @@ router.get('/join/:code', async (req, res) => {
 
     const { data: session, error } = await supabaseAdmin
       .from('sessions')
-      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, created_at, ended_at, vod_ready_at, streams!streams_session_id_fkey(id, display_name, user_id, youtube_url, platform, offset_seconds, is_anchor, is_active, joined_at, left_at)')
+      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, created_at, ended_at, vod_ready_at, title, streams!streams_session_id_fkey(id, display_name, user_id, youtube_url, platform, offset_seconds, is_anchor, is_active, joined_at, left_at)')
       .eq('participant_link', code)
       .single();
 
@@ -191,7 +356,7 @@ router.get('/watch/:code', async (req, res) => {
 
     const { data: session, error } = await supabaseAdmin
       .from('sessions')
-      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, created_at, ended_at, vod_ready_at, streams!streams_session_id_fkey(id, display_name, user_id, youtube_url, platform, offset_seconds, is_anchor, is_active, joined_at, left_at)')
+      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, created_at, ended_at, vod_ready_at, title, streams!streams_session_id_fkey(id, display_name, user_id, youtube_url, platform, offset_seconds, is_anchor, is_active, joined_at, left_at)')
       .eq('spectator_link', code)
       .single();
 
@@ -360,6 +525,81 @@ router.post('/:id/promote-anchor', requireAuth, async (req, res) => {
   }
 });
 
+// POST /api/sessions/:id/sync-to-latest — Promote the latest-starting synced stream to anchor
+router.post('/:id/sync-to-latest', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { data: session, error: fetchError } = await supabaseAdmin
+      .from('sessions')
+      .select('host_id')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    if (req.supabaseUser?.id !== session.host_id) {
+      return res.status(403).json({ error: 'Only the host can change the sync baseline' });
+    }
+
+    const { data: syncedStreams, error: streamsError } = await supabaseAdmin
+      .from('streams')
+      .select('id, display_name, youtube_start_time, is_anchor')
+      .eq('session_id', id)
+      .eq('is_active', true)
+      .not('youtube_start_time', 'is', null)
+      .order('youtube_start_time', { ascending: false });
+
+    if (streamsError) throw streamsError;
+
+    const latestStream = syncedStreams?.[0];
+    if (!latestStream) {
+      return res.status(400).json({ error: 'No synced POV start times are available yet' });
+    }
+
+    if (!latestStream.is_anchor) {
+      const db = req.supabase;
+
+      const { error: clearError } = await db
+        .from('streams')
+        .update({ is_anchor: false })
+        .eq('session_id', id);
+
+      if (clearError) throw clearError;
+
+      const { error: setAnchorError } = await db
+        .from('streams')
+        .update({ is_anchor: true })
+        .eq('id', latestStream.id)
+        .eq('session_id', id);
+
+      if (setAnchorError) throw setAnchorError;
+
+      const { error: sessionUpdateError } = await db
+        .from('sessions')
+        .update({ anchor_stream_id: latestStream.id })
+        .eq('id', id);
+
+      if (sessionUpdateError) throw sessionUpdateError;
+
+      syncManager.promoteAnchor(id, latestStream.id);
+    }
+
+    res.json({
+      success: true,
+      streamId: latestStream.id,
+      displayName: latestStream.display_name,
+      youtubeStartTime: latestStream.youtube_start_time,
+      alreadyLatestAnchor: !!latestStream.is_anchor,
+    });
+  } catch (err) {
+    console.error('Error syncing to latest stream:', err);
+    res.status(500).json({ error: 'Failed to sync to latest POV' });
+  }
+});
+
 // PATCH /api/sessions/:id/streams/:streamId/start-time — Persist YouTube stream start time
 // Called by the client after player.getVideoStartTime() resolves, so VOD recalculation
 // works correctly even after a server restart (no audio data retained between restarts).
@@ -415,6 +655,51 @@ router.patch('/:id/streams/:streamId/offset', requireAuth, async (req, res) => {
   }
 });
 
+// POST /api/sessions/:id/streams/:streamId/auto-inactive — auto-archive a stream that ended/offlined
+router.post('/:id/streams/:streamId/auto-inactive', requireAuth, async (req, res) => {
+  try {
+    const { id, streamId } = req.params;
+    const authUser = req.supabaseUser;
+
+    const { data: session, error: sessionError } = await supabaseAdmin
+      .from('sessions')
+      .select('host_id, status')
+      .eq('id', id)
+      .single();
+
+    if (sessionError || !session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    if (session.status === 'ended') {
+      return res.json({ success: true, archived: false, sessionEnded: true });
+    }
+
+    const { data: stream, error: streamError } = await supabaseAdmin
+      .from('streams')
+      .select('id, user_id, is_active')
+      .eq('id', streamId)
+      .eq('session_id', id)
+      .single();
+
+    if (streamError || !stream) {
+      return res.status(404).json({ error: 'Stream not found' });
+    }
+
+    const isHost = authUser?.id === session.host_id;
+    const isOwner = authUser?.id === stream.user_id;
+    if (!isHost && !isOwner) {
+      return res.status(403).json({ error: 'Only the stream owner or host can auto-archive this stream' });
+    }
+
+    const result = await archiveStreamAndMaybeFinalizeSession(id, streamId);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('Error auto-archiving stream:', err);
+    res.status(500).json({ error: 'Failed to auto-archive stream' });
+  }
+});
+
 // POST /api/sessions/:id/leave — Participant leaves a session (archives their stream)
 router.post('/:id/leave', requireAuth, async (req, res) => {
   try {
@@ -456,7 +741,9 @@ router.post('/:id/leave', requireAuth, async (req, res) => {
     // Remove from sync manager
     syncManager.removeStream(id, stream.id);
 
-    res.json({ success: true, archivedStreamId: stream.id });
+    const autoEnd = await autoEndSessionIfNoActiveStreams(id);
+
+    res.json({ success: true, archivedStreamId: stream.id, sessionEnded: autoEnd.ended === true });
   } catch (err) {
     console.error('Error leaving session:', err);
     res.status(500).json({ error: 'Failed to leave session' });
@@ -467,6 +754,7 @@ router.post('/:id/leave', requireAuth, async (req, res) => {
 router.post('/:id/end', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
+    console.log(`[API] POST /api/sessions/${id}/end — user=${req.supabaseUser?.id?.slice(0, 8) ?? 'unknown'}`);
 
     // Verify the requester is the host (public read is fine)
     const { data: session, error: fetchError } = await supabaseAdmin
@@ -483,43 +771,7 @@ router.post('/:id/end', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'Only the host can end the session' });
     }
 
-    // Fetch all streams to compute final VOD offsets from UTC start times
-    const { data: allStreams } = await supabaseAdmin
-      .from('streams')
-      .select('id, is_anchor, youtube_start_time, is_active')
-      .eq('session_id', id);
-
-    const anchor = allStreams?.find((s) => s.is_anchor);
-    if (anchor?.youtube_start_time && allStreams?.length > 0) {
-      const anchorStart = anchor.youtube_start_time;
-      for (const stream of allStreams) {
-        if (stream.id === anchor.id) continue;
-        if (stream.youtube_start_time) {
-          const offset = Math.round((stream.youtube_start_time - anchorStart) * 100) / 100;
-          // Save computed offset to DB so VOD playback works without the sync server
-          await supabaseAdmin
-            .from('streams')
-            .update({ offset_seconds: offset })
-            .eq('id', stream.id);
-          console.log(`[API] Saved VOD offset for stream ${stream.id.slice(0, 8)}: ${offset}s`);
-        }
-      }
-    }
-
-    // Use authenticated client for UPDATE (RLS: auth.uid() = host_id)
-    const { error: updateError } = await supabaseAdmin
-      .from('sessions')
-      .update({
-        status: 'ended',
-        ended_at: new Date().toISOString(),
-        vod_ready_at: new Date().toISOString(),
-      })
-      .eq('id', id);
-
-    if (updateError) throw updateError;
-
-    // Clean up sync manager
-    syncManager.stopSession(id);
+    await finalizeSessionEnd(id);
 
     res.json({ success: true });
   } catch (err) {
