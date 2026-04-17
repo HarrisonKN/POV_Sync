@@ -108,6 +108,15 @@ function runBroadcastCycle(sessionId) {
   const result = calculateOffsets(state);
   if (!result) return;
 
+  // Debug: print offsets + start times to server terminal
+  const anchorSt = state.startTimes.get(state.anchorStreamId);
+  const rows = [...state.streamIds].map((sid) => {
+    const st = state.startTimes.get(sid);
+    const off = result.offsets[sid];
+    return `  ${sid.slice(0,8)} startTime=${st ? new Date(st*1000).toISOString().substring(11,19)+' UTC' : 'unknown'} offset=${off != null ? off.toFixed(2)+'s' : 'null'}`;
+  }).join('\n');
+  console.log(`[SyncManager] Broadcast offsets (anchor=${state.anchorStreamId.slice(0,8)} startTime=${anchorSt ? new Date(anchorSt*1000).toISOString().substring(11,19)+' UTC' : 'unknown'}):\n${rows}`);
+
   state.broadcastFn({
     type: 'SYNC_OFFSETS',
     sessionId,

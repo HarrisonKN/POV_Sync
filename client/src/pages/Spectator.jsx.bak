@@ -1,0 +1,1149 @@
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import { useParams, useLocation } from 'react-router-dom';
+import { supabase } from '../lib/supabase';
+import StreamPlayer from '../components/StreamPlayer';
+import StatusIndicators from '../components/StatusIndicators';
+import ErrorState from '../components/ErrorState';
+import PlaybackControls from '../components/PlaybackControls';
+import SessionSkeleton from '../components/SessionSkeleton';
+
+const ROOM_TILE_MIN_WIDTH = 180;
+const ROOM_TILE_MAX_WIDTH = 840;
+const ROOM_TILE_DEFAULT_WIDTH = 300;
+const VIEW_MODE_OPTIONS = [
+  { id: 'stage', label: 'Stage view', shortLabel: 'Stage' },
+  { id: 'wall', label: 'Wall view', shortLabel: 'Wall' },
+  { id: 'cycle', label: 'Cycle view', shortLabel: 'Cycle' },
+];
+
+export default function Spectator() {
+  const { code } = useParams();
+  const location = useLocation();
+  const povUserId = useMemo(() => new URLSearchParams(location.search).get('pov'), [location.search]);
+  const [session, setSession] = useState(null);
+  const [streams, setStreams] = useState([]);
+  const [mainStreamId, setMainStreamId] = useState(null);
+  const [viewMode, setViewMode] = useState('stage');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [syncStats, setSyncStats] = useState(null);
+  const [roomTileWidth, setRoomTileWidth] = useState(() => {
+    try {
+      const saved = Number(localStorage.getItem('povsync.roomTileWidth'));
+      return Number.isFinite(saved) && saved > 0 ? saved : ROOM_TILE_DEFAULT_WIDTH;
+    } catch (_) {
+      return ROOM_TILE_DEFAULT_WIDTH;
+    }
+  });
+  const [showMobileRoomMeta, setShowMobileRoomMeta] = useState(false);
+  const [showMobileScale, setShowMobileScale] = useState(false);
+  const [isRoomHeaderCollapsed, setIsRoomHeaderCollapsed] = useState(false);
+  const [cycleUiVisible, setCycleUiVisible] = useState(true);
+  const [cycleHoverStreamId, setCycleHoverStreamId] = useState(null);
+  const [isMobileLayout, setIsMobileLayout] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(max-width: 639px)').matches;
+  });
+  // Saved offsets from DB — applied on VOD load
+  const [offsets, setOffsets] = useState({});
+  const visibleStreams = useMemo(() => (
+    session?.status === 'ended'
+      ? streams
+      : streams.filter((s) => s.is_active !== false)
+  ), [session?.status, streams]);
+  const hostStream = visibleStreams.find((s) => s.user_id === session?.host_id);
+  const hostName = hostStream?.display_name ?? hostStream?.users?.display_name ?? 'Host';
+  const roomTileMinWidth = Math.min(Math.max(roomTileWidth, ROOM_TILE_MIN_WIDTH), ROOM_TILE_MAX_WIDTH);
+  const wallColumnCount = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(Math.max(visibleStreams.length, 1)))));
+  const wallGridMaxWidth = wallColumnCount * roomTileMinWidth + Math.max(0, wallColumnCount - 1) * 12;
+  const filmstripTileWidth = Math.min(360, Math.max(180, Math.round(roomTileMinWidth * 0.58)));
+  const effectiveWallColumnCount = isMobileLayout ? Math.min(2, Math.max(1, visibleStreams.length || 1)) : wallColumnCount;
+  const effectiveWallGridMaxWidth = isMobileLayout ? null : wallGridMaxWidth;
+  const effectiveFilmstripTileWidth = isMobileLayout ? Math.min(240, Math.max(176, Math.round(roomTileMinWidth * 0.52))) : filmstripTileWidth;
+  const cycleActiveIndex = useMemo(
+    () => visibleStreams.findIndex((stream) => stream.id === mainStreamId),
+    [visibleStreams, mainStreamId]
+  );
+  const cycleHoverStream = visibleStreams.find((stream) => stream.id === cycleHoverStreamId) ?? null;
+  const cycleInfoStream = cycleHoverStream ?? visibleStreams[cycleActiveIndex] ?? visibleStreams[0] ?? null;
+  const isWallView = viewMode === 'wall';
+  const isCycleView = viewMode === 'cycle';
+  const activeMainStream = visibleStreams.find((stream) => stream.id === mainStreamId) ?? null;
+
+  // Player refs and sync state (same pattern as Viewer)
+  const playerRefs = useRef({});
+  const isPlayingRef = useRef(true);
+  const syncingRef = useRef(false);
+  const wsRef = useRef(null);
+  const lastSeekTs = useRef(0);
+  const localOverrideStreamIdRef = useRef(null);
+  const SEEK_COOLDOWN_MS = 4000;
+  const cycleHideTimerRef = useRef(null);
+  const cycleTouchStartRef = useRef(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('povsync.roomTileWidth', String(roomTileWidth));
+    } catch (_) {}
+  }, [roomTileWidth]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const media = window.matchMedia('(max-width: 639px)');
+    const handleChange = () => setIsMobileLayout(media.matches);
+    handleChange();
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', handleChange);
+      return () => media.removeEventListener('change', handleChange);
+    }
+    media.addListener(handleChange);
+    return () => media.removeListener(handleChange);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileLayout) {
+      setShowMobileRoomMeta(false);
+      setShowMobileScale(false);
+    }
+  }, [isMobileLayout]);
+
+  useEffect(() => {
+    if (!isRoomHeaderCollapsed) return;
+    setShowMobileRoomMeta(false);
+    setShowMobileScale(false);
+  }, [isRoomHeaderCollapsed]);
+
+  const revealCycleUi = useCallback(() => {
+    setCycleUiVisible(true);
+    if (cycleHideTimerRef.current) {
+      window.clearTimeout(cycleHideTimerRef.current);
+      cycleHideTimerRef.current = null;
+    }
+    cycleHideTimerRef.current = window.setTimeout(() => {
+      setCycleUiVisible(false);
+    }, 2200);
+  }, []);
+
+  useEffect(() => {
+    if (viewMode !== 'cycle') {
+      setCycleUiVisible(true);
+      setCycleHoverStreamId(null);
+      if (cycleHideTimerRef.current) {
+        window.clearTimeout(cycleHideTimerRef.current);
+        cycleHideTimerRef.current = null;
+      }
+      return undefined;
+    }
+
+    revealCycleUi();
+    return () => {
+      if (cycleHideTimerRef.current) {
+        window.clearTimeout(cycleHideTimerRef.current);
+        cycleHideTimerRef.current = null;
+      }
+    };
+  }, [revealCycleUi, viewMode]);
+
+  useEffect(() => {
+    if (!visibleStreams.some((stream) => stream.id === cycleHoverStreamId)) {
+      setCycleHoverStreamId(null);
+    }
+  }, [cycleHoverStreamId, visibleStreams]);
+
+  useEffect(() => {
+    if (
+      localOverrideStreamIdRef.current &&
+      !visibleStreams.some((stream) => stream.id === localOverrideStreamIdRef.current)
+    ) {
+      localOverrideStreamIdRef.current = null;
+    }
+  }, [visibleStreams]);
+
+  // Fetch session on mount
+  useEffect(() => {
+    async function fetchSession() {
+      try {
+        const res = await fetch(`/api/sessions/watch/${code}`);
+        if (!res.ok) throw new Error('Session not found');
+        const data = await res.json();
+        setSession(data.session);
+        const fetchedStreams = data.session.streams || [];
+        setStreams(fetchedStreams);
+
+        // Store saved offsets for VOD seek-to-start
+        const offsetMap = {};
+        fetchedStreams.forEach((s) => { offsetMap[s.id] = s.offset_seconds ?? 0; });
+        setOffsets(offsetMap);
+
+        const anchor = fetchedStreams.find((s) => s.is_anchor);
+        const povStream = povUserId && fetchedStreams.find((s) => s.user_id === povUserId);
+        setMainStreamId(povStream?.id || anchor?.id || fetchedStreams[0]?.id || null);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchSession();
+  }, [code]);
+
+  // Subscribe to realtime stream changes so spectators see new joiners live
+  useEffect(() => {
+    if (!session?.id) return;
+
+    const channel = supabase
+      .channel(`spectator-${session.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'streams',
+          filter: `session_id=eq.${session.id}`,
+        },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            setStreams((prev) => {
+              if (prev.some((s) => s.id === payload.new.id)) return prev;
+              return [...prev, payload.new];
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            setStreams((prev) =>
+              prev.map((s) => (s.id === payload.new.id ? payload.new : s))
+            );
+          } else if (payload.eventType === 'DELETE') {
+            setStreams((prev) => prev.filter((s) => s.id !== payload.old.id));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'sessions',
+          filter: `id=eq.${session.id}`,
+        },
+        (payload) => {
+          setSession(payload.new);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session?.id]);
+
+  // Auto-select first stream when they arrive
+  useEffect(() => {
+    if (!mainStreamId && visibleStreams.length > 0) {
+      const anchor = visibleStreams.find((s) => s.is_anchor);
+      setMainStreamId(anchor?.id || visibleStreams[0]?.id);
+    }
+  }, [visibleStreams, mainStreamId]);
+
+  // Read-only live sync: spectators receive room offsets and status updates
+  // without sending control messages back to the server.
+  useEffect(() => {
+    if (!session?.id) return;
+
+    let active = true;
+    let reconnectTimer = null;
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsHost = import.meta.env.VITE_WS_URL || `${wsProtocol}//${window.location.hostname}:3002`;
+
+    function connect() {
+      if (!active) return;
+      const ws = new WebSocket(`${wsHost}/ws?sessionId=${session.id}&role=spectator`);
+      wsRef.current = ws;
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+
+          if (msg.type === 'SYNC_OFFSETS') {
+            setSyncStats({
+              offsets: msg.offsets || {},
+              confidence: msg.confidence || {},
+              startTimesAvailable: msg.startTimesAvailable || {},
+              anchorStreamId: msg.anchorStreamId ?? null,
+              timestamp: msg.timestamp ?? null,
+            });
+
+            setOffsets((prev) => ({
+              ...prev,
+              ...(msg.offsets || {}),
+            }));
+          }
+
+          if (msg.type === 'ANCHOR_REMOVED') {
+            setSyncStats((prev) => ({ ...(prev || {}), anchorRemoved: true }));
+          }
+        } catch (err) {
+          console.error('[WS] Spectator message parse error:', err);
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error('[WS] Spectator error:', err);
+      };
+
+      ws.onclose = () => {
+        if (wsRef.current === ws) {
+          wsRef.current = null;
+        }
+        if (active) {
+          console.log('[WS] Spectator disconnected, reconnecting in 3s...');
+          reconnectTimer = setTimeout(connect, 3000);
+        }
+      };
+    }
+
+    connect();
+
+    return () => {
+      active = false;
+      clearTimeout(reconnectTimer);
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.close();
+      }
+      wsRef.current = null;
+    };
+  }, [session?.id]);
+
+  // Keep refs to current values so callbacks stay stable (must be above early returns)
+  const streamsRef = useRef(streams);
+  useEffect(() => { streamsRef.current = visibleStreams; }, [visibleStreams]);
+
+  const offsetsRef = useRef(offsets);
+  useEffect(() => { offsetsRef.current = offsets; }, [offsets]);
+
+  const sessionRef = useRef(session);
+  useEffect(() => { sessionRef.current = session; }, [session]);
+
+  const readyCountRef = useRef(0);
+
+  const syncMirroredPair = useCallback((streamId, preferredPlayerId = streamId, threshold = 0.35) => {
+    const stagePlayer = playerRefs.current[streamId];
+    const filmPlayer = playerRefs.current[`film-${streamId}`];
+
+    if (!stagePlayer || !filmPlayer || stagePlayer === filmPlayer) return;
+
+    const useFilmAsSource = preferredPlayerId === `film-${streamId}`;
+    const sourcePlayer = useFilmAsSource ? filmPlayer : stagePlayer;
+    const targetPlayer = useFilmAsSource ? stagePlayer : filmPlayer;
+
+    try {
+      const sourceTime = sourcePlayer.getCurrentTime?.();
+      const targetTime = targetPlayer.getCurrentTime?.();
+
+      if (Number.isFinite(sourceTime) && Number.isFinite(targetTime) && Math.abs(sourceTime - targetTime) > threshold) {
+        lastSeekTs.current = Date.now();
+        targetPlayer.seekTo?.(sourceTime, true);
+      }
+
+      const YT = window.YT;
+      const sourceState = sourcePlayer.getPlayerState?.();
+      if (!YT || typeof sourceState !== 'number') return;
+
+      if (sourceState === YT.PlayerState.PLAYING) {
+        targetPlayer.playVideo?.();
+      } else if (sourceState === YT.PlayerState.PAUSED) {
+        targetPlayer.pauseVideo?.();
+      }
+    } catch (_) {}
+  }, []);
+
+  const handleGoLiveLocal = useCallback(() => {
+    if (!mainStreamId) return;
+
+    syncingRef.current = true;
+    lastSeekTs.current = Date.now();
+    localOverrideStreamIdRef.current = mainStreamId;
+
+    const stagePlayer = playerRefs.current[mainStreamId];
+    const filmPlayer = playerRefs.current[`film-${mainStreamId}`];
+    const offset = offsetsRef.current[mainStreamId] ?? 0;
+
+    try {
+      const duration = stagePlayer?.getDuration?.() ?? filmPlayer?.getDuration?.() ?? 0;
+      const liveEdge = duration > 0 ? duration : 9999999;
+      const target = Math.max(0, liveEdge - offset);
+      (stagePlayer ?? filmPlayer)?.seekTo?.(target, true);
+    } catch (_) {}
+
+    syncingRef.current = false;
+  }, [mainStreamId]);
+
+  const handleResyncLocal = useCallback(() => {
+    if (!mainStreamId) return;
+
+    localOverrideStreamIdRef.current = null;
+
+    const anchor = streamsRef.current.find((stream) => stream.is_anchor);
+    const anchorPlayer = anchor
+      ? (anchor.id === mainStreamId
+          ? (playerRefs.current[`film-${anchor.id}`] ?? playerRefs.current[anchor.id])
+          : playerRefs.current[anchor.id])
+      : null;
+    const anchorTime = anchorPlayer?.getCurrentTime?.() ?? 0;
+
+    if (!anchor || !Number.isFinite(anchorTime) || anchorTime <= 0) {
+      syncMirroredPair(mainStreamId, `film-${mainStreamId}`, 0);
+      return;
+    }
+
+    syncingRef.current = true;
+    lastSeekTs.current = Date.now();
+
+    const offset = offsetsRef.current[mainStreamId] ?? 0;
+    const target = Math.max(0, anchorTime - (mainStreamId === anchor.id ? 0 : offset));
+    try { playerRefs.current[mainStreamId]?.seekTo?.(target, true); } catch (_) {}
+    try { playerRefs.current[`film-${mainStreamId}`]?.seekTo?.(target, true); } catch (_) {}
+
+    syncingRef.current = false;
+  }, [mainStreamId, syncMirroredPair]);
+
+  const handleLocalPlaybackStep = useCallback((deltaSeconds) => {
+    if (!mainStreamId) return;
+
+    const stagePlayer = playerRefs.current[mainStreamId];
+    const filmPlayer = playerRefs.current[`film-${mainStreamId}`];
+    const referencePlayer = stagePlayer ?? filmPlayer;
+    const currentTime = referencePlayer?.getCurrentTime?.();
+
+    if (!Number.isFinite(currentTime)) return;
+
+    const targetTime = Math.max(0, currentTime + deltaSeconds);
+    syncingRef.current = true;
+    lastSeekTs.current = Date.now();
+    localOverrideStreamIdRef.current = mainStreamId;
+    try { (stagePlayer ?? filmPlayer)?.seekTo?.(targetTime, true); } catch (_) {}
+    syncingRef.current = false;
+  }, [mainStreamId]);
+
+  useEffect(() => {
+    if (!mainStreamId) return;
+    const timeoutId = window.setTimeout(() => {
+      syncMirroredPair(mainStreamId, `film-${mainStreamId}`);
+    }, 120);
+    return () => window.clearTimeout(timeoutId);
+  }, [mainStreamId, syncMirroredPair]);
+
+  useEffect(() => {
+    const DRIFT_SEEK_THRESHOLD = 3;
+    const FILM_DRIFT_THRESHOLD = 1.5;
+    const PAIR_DRIFT_THRESHOLD = 0.35;
+
+    const intervalId = setInterval(() => {
+      if (syncingRef.current) return;
+      if (Date.now() - lastSeekTs.current < SEEK_COOLDOWN_MS) return;
+
+      streamsRef.current.forEach((stream) => {
+        if (stream.id === localOverrideStreamIdRef.current) return;
+        const preferredPlayerId = stream.id === mainStreamId ? stream.id : `film-${stream.id}`;
+        syncMirroredPair(stream.id, preferredPlayerId, PAIR_DRIFT_THRESHOLD);
+      });
+
+      if (sessionRef.current?.status === 'ended') return;
+
+      const anchor = streamsRef.current.find((stream) => stream.is_anchor);
+      const anchorPlayer = anchor
+        ? (anchor.id === localOverrideStreamIdRef.current
+            ? (playerRefs.current[`film-${anchor.id}`] ?? playerRefs.current[anchor.id])
+            : playerRefs.current[anchor.id])
+        : null;
+      if (!anchor || !anchorPlayer || typeof anchorPlayer.getCurrentTime !== 'function') return;
+
+      let anchorTime;
+      try { anchorTime = anchorPlayer.getCurrentTime(); } catch (_) { return; }
+      if (!Number.isFinite(anchorTime) || anchorTime <= 0) return;
+
+      let didSeek = false;
+
+      try {
+        const anchorFilm = playerRefs.current[`film-${anchor.id}`];
+        if (anchorFilm) {
+          const filmTime = anchorFilm.getCurrentTime?.() ?? 0;
+          if (Math.abs(filmTime - anchorTime) > FILM_DRIFT_THRESHOLD) {
+            anchorFilm.seekTo?.(anchorTime, true);
+            didSeek = true;
+          }
+        }
+      } catch (_) {}
+
+      streamsRef.current.forEach((stream) => {
+        if (stream.id === anchor.id) return;
+        const isLocalOverride = stream.id === localOverrideStreamIdRef.current;
+        const offset = offsetsRef.current[stream.id] ?? 0;
+        const expected = Math.max(0, anchorTime - offset);
+
+        try {
+          const stagePlayer = playerRefs.current[stream.id];
+          if (stagePlayer && !isLocalOverride) {
+            const stageTime = stagePlayer.getCurrentTime?.() ?? 0;
+            if (Math.abs(stageTime - expected) > DRIFT_SEEK_THRESHOLD) {
+              stagePlayer.seekTo?.(expected, true);
+              didSeek = true;
+            }
+          }
+        } catch (_) {}
+
+        try {
+          const filmPlayer = playerRefs.current[`film-${stream.id}`];
+          if (filmPlayer) {
+            const filmTime = filmPlayer.getCurrentTime?.() ?? 0;
+            if (Math.abs(filmTime - expected) > FILM_DRIFT_THRESHOLD) {
+              filmPlayer.seekTo?.(expected, true);
+              didSeek = true;
+            }
+          }
+        } catch (_) {}
+      });
+
+      if (didSeek) lastSeekTs.current = Date.now();
+    }, 2500);
+
+    return () => clearInterval(intervalId);
+  }, [mainStreamId, syncMirroredPair]);
+
+  // Store player ref when ready; for VODs, seek to aligned start once all ready
+  const handlePlayerReady = useCallback((streamId, player) => {
+    playerRefs.current[streamId] = player;
+    syncMirroredPair(streamId, streamId);
+
+    const isFilm = typeof streamId === 'string' && streamId.startsWith('film-');
+    if (isFilm) return;
+    if (sessionRef.current?.status !== 'ended') return;
+
+    readyCountRef.current += 1;
+    const total = streamsRef.current.length;
+    if (readyCountRef.current < total) return;
+
+    const anchor = streamsRef.current.find((s) => s.is_anchor);
+    if (!anchor) return;
+    streamsRef.current.forEach((stream) => {
+      const offset = offsetsRef.current[stream.id] ?? 0;
+      const target = Math.max(0, -offset);
+      try { playerRefs.current[stream.id]?.seekTo(target, true); } catch (_) {}
+      try { playerRefs.current[`film-${stream.id}`]?.seekTo(target, true); } catch (_) {}
+    });
+  }, [syncMirroredPair]);
+
+  // Anchor plays/pauses → sync everyone.
+  // Non-anchor plays/pauses → sync only its own filmstrip mirror.
+  const handleStageStateChange = useCallback((streamId, state) => {
+    if (syncingRef.current) return;
+    const YT = window.YT;
+    if (!YT) return;
+    if (state !== YT.PlayerState.PAUSED && state !== YT.PlayerState.PLAYING) return;
+
+    const playing = state === YT.PlayerState.PLAYING;
+    const isAnchor = streamsRef.current.find((s) => s.id === streamId)?.is_anchor ?? false;
+
+    syncingRef.current = true;
+
+    if (isAnchor) {
+      isPlayingRef.current = playing;
+      Object.entries(playerRefs.current).forEach(([id, player]) => {
+        if (id === streamId) return;
+        try { playing ? player.playVideo() : player.pauseVideo(); } catch (_) {}
+      });
+    } else {
+      const filmPlayer = playerRefs.current[`film-${streamId}`];
+      if (filmPlayer) {
+        try { playing ? filmPlayer.playVideo() : filmPlayer.pauseVideo(); } catch (_) {}
+      }
+    }
+
+    syncingRef.current = false;
+  }, []);
+
+  const handleSwapStream = useCallback((newStreamId) => {
+    if (newStreamId === mainStreamId) return;
+    localOverrideStreamIdRef.current = null;
+    syncMirroredPair(newStreamId, `film-${newStreamId}`);
+    setMainStreamId(newStreamId);
+  }, [mainStreamId, syncMirroredPair]);
+
+  const selectViewMode = useCallback((mode) => {
+    setViewMode(mode);
+  }, []);
+
+  const handleCycleStep = useCallback((direction) => {
+    if (!visibleStreams.length) return;
+    const currentIndex = visibleStreams.findIndex((stream) => stream.id === mainStreamId);
+    const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+    const nextIndex = (safeIndex + direction + visibleStreams.length) % visibleStreams.length;
+    const nextStreamId = visibleStreams[nextIndex]?.id;
+    if (!nextStreamId) return;
+    handleSwapStream(nextStreamId);
+    setCycleHoverStreamId(nextStreamId);
+    revealCycleUi();
+  }, [handleSwapStream, mainStreamId, revealCycleUi, visibleStreams]);
+
+  useEffect(() => {
+    if (viewMode !== 'cycle') return undefined;
+
+    const handleKey = (event) => {
+      if (event.key === 'ArrowLeft') handleCycleStep(-1);
+      if (event.key === 'ArrowRight') handleCycleStep(1);
+    };
+
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [handleCycleStep, viewMode]);
+
+  // ── Early returns (all hooks are declared above) ────────────────────────────
+
+  if (loading) {
+    return <SessionSkeleton />;
+  }
+
+  if (error) {
+    return (
+      <ErrorState
+        icon="📺"
+        title="Session not found"
+        message={error}
+        secondary={{ label: '← Home', to: '/' }}
+      />
+    );
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.28, ease: 'easeOut' }}
+      className="w-full max-w-none px-2.5 sm:px-4 py-3 sm:py-4"
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.28, ease: 'easeOut' }}
+        className="glass-panel mb-3 sm:mb-4 rounded-2xl border border-white/10 px-3 py-3 sm:px-4 sm:py-4"
+      >
+        <div className="flex flex-col gap-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded-full border ${session?.status === 'live' ? 'text-pov-success bg-pov-success/10 border-pov-success/20' : 'text-pov-warning bg-pov-warning/10 border-pov-warning/20'}`}>
+                  {session?.status === 'live' ? 'Live session' : 'VOD session'}
+                </span>
+                <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded-full border text-pov-muted bg-pov-muted/10 border-pov-muted/20">
+                  Spectator view
+                </span>
+                <span className="text-[10px] sm:text-xs text-pov-muted font-mono">
+                  {visibleStreams.length} stream{visibleStreams.length !== 1 ? 's' : ''}
+                </span>
+                <span className="text-[10px] sm:text-xs text-pov-muted/70 font-mono">
+                  {VIEW_MODE_OPTIONS.find((mode) => mode.id === viewMode)?.shortLabel || 'Stage'}
+                </span>
+              </div>
+              <h1 className="text-lg sm:text-xl font-bold tracking-tight text-pov-text">{session?.title || 'Spectator room'}</h1>
+              <p className="mt-1 text-xs sm:text-sm leading-relaxed text-pov-muted">
+                {isRoomHeaderCollapsed
+                  ? `${hostName} · ${session?.spectator_link || session?.id?.slice(0, 8) || 'session'}`
+                  : `${hostName} controls the room while you watch in read-only mode with the same synced POV layouts.`}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setIsRoomHeaderCollapsed((current) => !current)}
+              className="shrink-0 rounded-xl border border-pov-border bg-pov-bg px-3 py-2 text-[10px] sm:text-xs font-mono text-pov-text transition-colors hover:bg-pov-border/30"
+              aria-expanded={!isRoomHeaderCollapsed}
+              aria-label={isRoomHeaderCollapsed ? 'Expand spectator room panel' : 'Collapse spectator room panel'}
+            >
+              {isRoomHeaderCollapsed ? 'Expand ▾' : 'Collapse ▴'}
+            </button>
+          </div>
+
+          <AnimatePresence initial={false}>
+            {!isRoomHeaderCollapsed && (
+              <motion.div
+                initial={{ opacity: 0, height: 0, y: -6 }}
+                animate={{ opacity: 1, height: 'auto', y: 0 }}
+                exit={{ opacity: 0, height: 0, y: -6 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
+                className="overflow-hidden"
+              >
+                <div className="flex flex-col gap-4 pt-1">
+                  <div className="hidden gap-2 sm:grid sm:grid-cols-3 xl:min-w-[360px]">
+                    <InfoPill label="Session" value={session?.spectator_link || session?.id?.slice(0, 8) || 'session'} />
+                    <InfoPill label="Host" value={hostName} />
+                    <InfoPill label="State" value={session?.status === 'live' ? 'Watching the live room in read-only mode' : 'Watching the saved VOD session'} />
+                  </div>
+
+                  {isMobileLayout && showMobileRoomMeta && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -8 }}
+                      transition={{ duration: 0.18, ease: 'easeOut' }}
+                      className="grid gap-2"
+                    >
+                      <InfoPill label="Session" value={session?.spectator_link || session?.id?.slice(0, 8) || 'session'} />
+                      <InfoPill label="Host" value={hostName} />
+                      <InfoPill label="State" value={session?.status === 'live' ? 'Watching the live room in read-only mode' : 'Watching the saved VOD session'} />
+                    </motion.div>
+                  )}
+
+                  <div className="glass-card flex flex-col gap-3 rounded-xl border border-white/8 px-3 py-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="flex sm:hidden flex-wrap items-center gap-2">
+                      {VIEW_MODE_OPTIONS.map((mode) => (
+                        <button
+                          key={mode.id}
+                          type="button"
+                          onClick={() => selectViewMode(mode.id)}
+                          className={`text-[10px] font-mono border rounded-lg px-3 py-2 transition-colors ${
+                            viewMode === mode.id
+                              ? 'border-pov-accent/40 bg-pov-accent/12 text-pov-text'
+                              : 'bg-pov-bg border-pov-border text-pov-text hover:bg-pov-border/30'
+                          }`}
+                        >
+                          {mode.shortLabel}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setShowMobileRoomMeta((current) => !current)}
+                        className="text-[10px] font-mono bg-pov-bg border border-pov-border text-pov-text hover:bg-pov-border/30 rounded-lg px-3 py-2 transition-colors"
+                      >
+                        {showMobileRoomMeta ? 'Hide info' : 'Room info'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowMobileScale((current) => !current)}
+                        className="text-[10px] font-mono bg-pov-bg border border-pov-border text-pov-text hover:bg-pov-border/30 rounded-lg px-3 py-2 transition-colors"
+                      >
+                        {showMobileScale ? 'Hide scale' : 'Scale'}
+                      </button>
+                    </div>
+
+                    {isMobileLayout && showMobileScale && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -8 }}
+                        transition={{ duration: 0.18, ease: 'easeOut' }}
+                        className="flex items-center gap-2 rounded-lg border border-pov-border bg-pov-bg px-3 py-3 sm:hidden"
+                      >
+                        <span className="text-[10px] font-mono text-pov-muted whitespace-nowrap">Scale</span>
+                        <input
+                          type="range"
+                          min={ROOM_TILE_MIN_WIDTH}
+                          max={ROOM_TILE_MAX_WIDTH}
+                          step="20"
+                          value={roomTileWidth}
+                          onChange={(event) => setRoomTileWidth(Number(event.target.value))}
+                          className="w-full accent-pov-accent"
+                          aria-label="Set room layout scale"
+                        />
+                        <span className="w-12 text-right text-[10px] font-mono text-pov-text tabular-nums">
+                          {roomTileWidth}px
+                        </span>
+                      </motion.div>
+                    )}
+
+                    <div className="hidden sm:flex flex-wrap items-center gap-2 sm:gap-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {VIEW_MODE_OPTIONS.map((mode) => (
+                          <button
+                            key={mode.id}
+                            type="button"
+                            onClick={() => selectViewMode(mode.id)}
+                            className={`text-[10px] sm:text-xs font-mono border rounded px-2.5 sm:px-3 py-1.5 transition-colors flex-shrink-0 ${
+                              viewMode === mode.id
+                                ? 'border-pov-accent/40 bg-pov-accent/12 text-pov-text'
+                                : 'bg-pov-bg border-pov-border text-pov-text hover:bg-pov-border/30'
+                            }`}
+                          >
+                            {mode.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="flex min-w-[270px] flex-1 items-center gap-2 rounded-lg border border-pov-border bg-pov-bg px-3 py-2">
+                        <span className="text-[10px] sm:text-xs font-mono text-pov-muted whitespace-nowrap">Scale</span>
+                        <input
+                          type="range"
+                          min={ROOM_TILE_MIN_WIDTH}
+                          max={ROOM_TILE_MAX_WIDTH}
+                          step="20"
+                          value={roomTileWidth}
+                          onChange={(event) => setRoomTileWidth(Number(event.target.value))}
+                          className="w-36 sm:w-56 accent-pov-accent"
+                          aria-label="Set room layout scale"
+                        />
+                        <span className="w-14 text-right text-[10px] sm:text-xs font-mono text-pov-text tabular-nums">
+                          {roomTileWidth}px
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="hidden sm:flex flex-wrap items-center gap-2 sm:gap-3" />
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </motion.div>
+
+      {session?.status === 'live' && syncStats && (
+        <div className="mb-3 sm:mb-4 bg-pov-surface border border-pov-border rounded-lg px-3 sm:px-4 py-2 sm:py-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] sm:text-xs font-mono text-pov-muted">
+          <span className="text-pov-accent">Read-only live sync</span>
+          <span className="hidden sm:inline text-pov-border">|</span>
+          <span>
+            {Object.values(syncStats.startTimesAvailable || {}).filter(Boolean).length}/{visibleStreams.length} start times
+          </span>
+          {syncStats.timestamp && (
+            <span className="hidden sm:inline text-pov-muted/60">
+              updated {Math.max(0, Math.round((Date.now() - syncStats.timestamp) / 1000))}s ago
+            </span>
+          )}
+        </div>
+      )}
+
+      {visibleStreams.length > 0 && mainStreamId && (
+        <PlaybackControls
+          title="Playback Controls"
+          description="These controls are local to your spectator view, so you can fine-tune the current POV without affecting the host's room state."
+          activeLabel={visibleStreams.find((stream) => stream.id === mainStreamId)?.display_name || 'POV'}
+          onStep={handleLocalPlaybackStep}
+          onGoLive={handleGoLiveLocal}
+          onResync={handleResyncLocal}
+          showLiveActions={session?.status === 'live'}
+          goLiveLabel="Go live (local POV)"
+          resyncLabel="Re-sync to room"
+        />
+      )}
+
+      <div className={`mb-2 sm:mb-3 ${isWallView ? '' : 'flex justify-center'}`}>
+        <motion.div
+          layout
+          className={isWallView
+            ? 'grid gap-2 sm:gap-3 mx-auto w-full justify-center'
+            : 'glass-card aspect-video w-full border border-white/10 rounded-2xl overflow-hidden relative mx-auto'}
+          style={isWallView
+            ? {
+                gridTemplateColumns: `repeat(${effectiveWallColumnCount}, minmax(0, 1fr))`,
+                ...(effectiveWallGridMaxWidth ? { maxWidth: `${effectiveWallGridMaxWidth}px` } : {}),
+              }
+            : {
+                width: 'min(100%, calc((100vh - 360px) * 16 / 9))',
+                maxHeight: 'calc(100vh - 360px)',
+                minHeight: isCycleView ? (isMobileLayout ? '70vh' : 'min(78vh, 920px)') : '220px',
+                height: isCycleView ? (isMobileLayout ? '70vh' : 'min(78vh, 920px)') : undefined,
+                backgroundColor: isCycleView ? '#000000' : undefined,
+                boxShadow: isCycleView ? '0 24px 80px rgba(0,0,0,0.35)' : undefined,
+              }}
+          onMouseMove={isCycleView ? revealCycleUi : undefined}
+          onClick={isCycleView ? revealCycleUi : undefined}
+          onTouchStart={isCycleView ? ((event) => {
+            cycleTouchStartRef.current = event.changedTouches[0]?.clientX ?? null;
+            revealCycleUi();
+          }) : undefined}
+          onTouchEnd={isCycleView ? ((event) => {
+            const startX = cycleTouchStartRef.current;
+            if (startX === null || startX === undefined) return;
+            const endX = event.changedTouches[0]?.clientX ?? startX;
+            const delta = endX - startX;
+            if (Math.abs(delta) > 48) {
+              handleCycleStep(delta < 0 ? 1 : -1);
+            }
+            cycleTouchStartRef.current = null;
+          }) : undefined}
+        >
+          {visibleStreams.length > 0 ? (
+            visibleStreams.map((stream) => {
+              const isActive = stream.id === mainStreamId;
+              const stageWrapperClass = isWallView
+                ? `relative aspect-video overflow-hidden rounded-2xl border-2 bg-black transition-all ${
+                    isActive ? 'border-pov-accent shadow-lg shadow-pov-accent/20' : 'border-pov-border hover:border-pov-muted'
+                  }`
+                : `absolute inset-0 transition-opacity duration-200 ${isActive ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`;
+
+              return (
+                <motion.div
+                  layout
+                  key={`stage-${stream.id}`}
+                  initial={false}
+                  animate={{ opacity: isWallView ? 1 : (isActive ? 1 : 0), scale: isWallView ? 1 : (isActive ? 1 : (isCycleView ? 1.01 : 0.985)) }}
+                  transition={{ duration: 0.22, ease: 'easeOut' }}
+                  className={stageWrapperClass}
+                >
+                  <StreamPlayer
+                    streamUrl={stream.youtube_url}
+                    platform={stream.platform}
+                    isMain={isActive}
+                    onReady={(player) => handlePlayerReady(stream.id, player)}
+                    onStateChange={(state) => handleStageStateChange(stream.id, state)}
+                    className="w-full h-full"
+                  />
+
+                  {isWallView ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handleSwapStream(stream.id)}
+                        className="absolute inset-0 z-20"
+                        aria-label={`Focus ${stream.display_name}`}
+                      />
+                      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/85 to-transparent px-3 py-2 pointer-events-none z-10">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-white truncate">{stream.display_name}</span>
+                          <StatusIndicators
+                            stream={stream}
+                            isHost={stream.user_id === session?.host_id}
+                          />
+                        </div>
+                      </div>
+                      {isActive && <div className="absolute top-0 left-0 right-0 h-0.5 bg-pov-accent z-10" />}
+                    </>
+                  ) : !isCycleView && isActive ? (
+                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-4 py-3 pointer-events-none z-10">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-white">{stream.display_name}</span>
+                        <StatusIndicators
+                          stream={stream}
+                          isHost={stream.user_id === session?.host_id}
+                        />
+                      </div>
+                    </div>
+                  ) : null}
+                </motion.div>
+              );
+            })
+          ) : (
+            <div className={`${isWallView ? 'col-span-full h-40' : 'w-full h-full min-h-[220px]'} flex items-center justify-center`}>
+              <div className="text-center">
+                <p className="text-pov-muted text-sm">Waiting for streams to join...</p>
+                {!isWallView && (
+                  <div className="mt-3 flex gap-2 justify-center">
+                    {[...Array(5)].map((_, i) => (
+                      <div
+                        key={i}
+                        className="w-3 h-3 bg-pov-border rounded-full animate-pulse"
+                        style={{ animationDelay: `${i * 150}ms` }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {isCycleView && visibleStreams.length > 0 && (
+            <>
+              <div className={`pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/70 via-black/20 to-transparent px-4 py-5 transition-opacity duration-200 ${cycleUiVisible ? 'opacity-100' : 'opacity-0'}`}>
+                <div className="max-w-3xl">
+                  <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-white/14 bg-black/25 px-3 py-1 text-[10px] font-mono uppercase tracking-[0.18em] text-white/70 backdrop-blur-md">
+                    <span>Current POV</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-xl font-semibold text-white sm:text-3xl">
+                      {activeMainStream?.display_name || 'POV'}
+                    </span>
+                    {activeMainStream && (
+                      <StatusIndicators
+                        stream={activeMainStream}
+                        isHost={activeMainStream.user_id === session?.host_id}
+                      />
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => handleCycleStep(-1)}
+                onMouseEnter={revealCycleUi}
+                className={`absolute left-3 top-1/2 z-30 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-full border border-white/14 bg-black/20 text-xl text-white shadow-lg backdrop-blur-md transition-opacity duration-200 sm:left-4 sm:h-14 sm:w-14 ${cycleUiVisible ? 'opacity-100' : 'opacity-0'}`}
+                aria-label="Previous POV"
+              >
+                ←
+              </button>
+              <button
+                type="button"
+                onClick={() => handleCycleStep(1)}
+                onMouseEnter={revealCycleUi}
+                className={`absolute right-3 top-1/2 z-30 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-full border border-white/14 bg-black/20 text-xl text-white shadow-lg backdrop-blur-md transition-opacity duration-200 sm:right-4 sm:h-14 sm:w-14 ${cycleUiVisible ? 'opacity-100' : 'opacity-0'}`}
+                aria-label="Next POV"
+              >
+                →
+              </button>
+
+              <CycleViewPicker
+                streams={visibleStreams}
+                activeStreamId={mainStreamId}
+                infoStreamId={cycleInfoStream?.id ?? mainStreamId}
+                visible={cycleUiVisible}
+                onHoverStream={(streamId) => {
+                  setCycleHoverStreamId(streamId);
+                  revealCycleUi();
+                }}
+                onLeave={() => setCycleHoverStreamId(mainStreamId)}
+                onSelectStream={(streamId) => {
+                  handleSwapStream(streamId);
+                  setCycleHoverStreamId(streamId);
+                  revealCycleUi();
+                }}
+              />
+            </>
+          )}
+        </motion.div>
+      </div>
+
+      <div
+        className={`${viewMode === 'stage' ? 'mb-2 pb-1' : 'hidden'} ${isMobileLayout ? '-mx-2.5 flex snap-x snap-mandatory gap-2 overflow-x-auto px-2.5 pb-2' : 'grid gap-2 sm:gap-3 overflow-x-auto'}`}
+        style={isMobileLayout ? undefined : { gridTemplateColumns: `repeat(auto-fill, minmax(${effectiveFilmstripTileWidth}px, ${effectiveFilmstripTileWidth}px))`, justifyContent: 'center' }}
+      >
+        {visibleStreams.length > 0 ? (
+          visibleStreams.map((stream) => {
+            const isActive = stream.id === mainStreamId;
+            return (
+              <motion.button
+                key={`film-wrap-${stream.id}`}
+                type="button"
+                layout
+                whileHover={{ y: -2, scale: 1.01 }}
+                whileTap={{ scale: 0.985 }}
+                transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+                onClick={() => handleSwapStream(stream.id)}
+                className={`group relative overflow-hidden rounded-2xl border text-left ${
+                  isActive
+                    ? 'border-pov-accent/70 shadow-[0_16px_50px_rgba(108,92,231,0.22)]'
+                    : 'border-white/8 hover:border-white/18'
+                } glass-card ${isMobileLayout ? 'w-[210px] min-h-full shrink-0 snap-start first:pl-0' : ''}`}
+                style={isMobileLayout ? { width: `${effectiveFilmstripTileWidth}px` } : undefined}
+              >
+                <div className="relative aspect-video overflow-hidden bg-black">
+                  <div className="pointer-events-none absolute inset-0">
+                    <StreamPlayer
+                      streamUrl={stream.youtube_url}
+                      platform={stream.platform}
+                      isMain={false}
+                      onReady={(player) => handlePlayerReady(`film-${stream.id}`, player)}
+                      className="h-full w-full"
+                    />
+                  </div>
+
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent" />
+
+                  {stream.is_anchor && (
+                    <div className="absolute left-3 top-3 rounded-full border border-white/10 bg-black/35 px-2 py-1 text-[10px] font-mono uppercase tracking-wide text-white/80 backdrop-blur-md">
+                      Anchor
+                    </div>
+                  )}
+
+                  {isActive && <div className="absolute inset-x-0 top-0 h-0.5 bg-pov-accent shadow-[0_0_18px_rgba(108,92,231,0.6)]" />}
+                </div>
+
+                <div className="absolute inset-x-0 bottom-0 p-3 pointer-events-none">
+                  <div className="glass-pill flex items-center justify-between gap-2 rounded-xl px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-semibold text-white">{stream.display_name}</p>
+                      <p className="mt-0.5 text-[10px] font-mono uppercase tracking-wide text-white/55">
+                        {isActive ? 'On stage' : 'Tap to focus'}
+                      </p>
+                    </div>
+                    <StatusIndicators
+                      stream={stream}
+                      isHost={stream.user_id === session?.host_id}
+                    />
+                  </div>
+                </div>
+              </motion.button>
+            );
+          })
+        ) : (
+          [...Array(5)].map((_, i) => (
+            <div
+              key={i}
+              className="flex-shrink-0 w-48 aspect-video rounded-lg border border-dashed border-pov-border bg-pov-surface/50 animate-pulse flex items-center justify-center"
+            >
+              <span className="text-[10px] text-pov-muted/40 font-mono">POV {i + 1}</span>
+            </div>
+          ))
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+function InfoPill({ label, value }) {
+  return (
+    <div className="rounded-xl border border-pov-border/60 bg-pov-bg/60 px-3 py-2 min-w-0">
+      <p className="text-[9px] font-mono uppercase tracking-wider text-pov-muted">{label}</p>
+      <p className="text-xs sm:text-sm font-medium text-pov-text truncate mt-0.5">{value}</p>
+    </div>
+  );
+}
+
+function CycleViewPicker({
+  streams,
+  activeStreamId,
+  infoStreamId,
+  visible,
+  onHoverStream,
+  onLeave,
+  onSelectStream,
+}) {
+  const infoStream = streams.find((stream) => stream.id === infoStreamId) ?? streams[0] ?? null;
+
+  return (
+    <div
+      className={`absolute inset-x-3 bottom-3 z-30 rounded-[1.35rem] border border-white/12 bg-black/35 p-3 shadow-[0_16px_40px_rgba(0,0,0,0.32)] backdrop-blur-xl transition-opacity duration-200 sm:inset-x-4 sm:bottom-4 sm:p-3.5 ${visible ? 'opacity-100' : 'opacity-0'}`}
+      onMouseEnter={() => infoStreamId && onHoverStream(infoStreamId)}
+      onMouseLeave={onLeave}
+    >
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-white/55">POV Picker</p>
+          <p className="truncate text-sm font-semibold text-white sm:text-[15px]">
+            {infoStream?.display_name || 'Select a POV'}
+          </p>
+          <p className="mt-1 text-[11px] text-white/45">
+            Swipe, tap the arrows, or use ← and →.
+          </p>
+        </div>
+        <span className="shrink-0 text-[10px] font-mono uppercase tracking-[0.16em] text-pov-success">
+          {Math.max(streams.findIndex((stream) => stream.id === activeStreamId), 0) + 1} / {streams.length}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {streams.map((stream, index) => {
+          const isActive = stream.id === activeStreamId;
+          return (
+            <button
+              key={stream.id}
+              type="button"
+              onMouseEnter={() => onHoverStream(stream.id)}
+              onFocus={() => onHoverStream(stream.id)}
+              onClick={() => onSelectStream(stream.id)}
+              className={`rounded-2xl border px-3 py-3 text-left transition-all ${
+                isActive
+                  ? 'border-pov-accent/80 bg-pov-accent/16 shadow-[inset_0_0_0_1px_rgba(108,92,231,0.25)]'
+                  : 'border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/8'
+              }`}
+            >
+              <span className="mb-1 block text-[10px] font-mono uppercase tracking-[0.16em] text-white/48">
+                POV {index + 1}
+              </span>
+              <span className="block truncate text-sm font-semibold text-white">{stream.display_name}</span>
+              <span className="mt-1 block truncate text-[11px] text-white/50">
+                {isActive ? 'Current selection' : 'Tap to switch'}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

@@ -165,6 +165,53 @@ app.get('/watch/:code', async (req, res, next) => {
   }
 });
 
+// ── OpenGraph meta tags for universal share links (/room/:code) ─────────────
+app.get('/room/:code', async (req, res, next) => {
+  try {
+    const htmlPath = path.join(clientDistPath, 'index.html');
+    if (!fs.existsSync(htmlPath)) return next();
+
+    const { code } = req.params;
+    const { data: session } = await supabaseAdmin
+      .from('sessions')
+      .select('id, title, status, streams!streams_session_id_fkey(display_name, is_active)')
+      .eq('share_link', code)
+      .single();
+
+    if (!session) return next();
+
+    const activeNames = (session.streams || [])
+      .filter((s) => s.is_active !== false)
+      .map((s) => s.display_name)
+      .filter(Boolean)
+      .join(', ');
+
+    const ogTitle = session.title || `POV Sync — ${session.status === 'live' ? 'Live' : 'VOD'} Session`;
+    const ogDesc = activeNames
+      ? `Join ${activeNames} watching in multi-POV sync`
+      : `A ${session.status === 'live' ? 'live' : 'saved'} multi-POV session on POV Sync`;
+
+    const escHtml = (s) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+
+    let html = fs.readFileSync(htmlPath, 'utf-8');
+    const metaTags = [
+      `<meta property="og:title" content="${escHtml(ogTitle)}" />`,
+      `<meta property="og:description" content="${escHtml(ogDesc)}" />`,
+      `<meta property="og:type" content="website" />`,
+      `<meta name="twitter:card" content="summary" />`,
+      `<meta name="twitter:title" content="${escHtml(ogTitle)}" />`,
+      `<meta name="twitter:description" content="${escHtml(ogDesc)}" />`,
+    ].join('\n    ');
+
+    html = html.replace('</head>', `    ${metaTags}\n  </head>`);
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+  } catch (err) {
+    console.error('[OG] Error injecting meta tags for /room/:code:', err.message);
+    next();
+  }
+});
+
 // SPA fallback — any non-API route serves index.html so React Router handles it
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api')) {

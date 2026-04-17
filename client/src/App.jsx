@@ -7,6 +7,7 @@ import CreateSession from './pages/CreateSession';
 import JoinSession from './pages/JoinSession';
 import Viewer from './pages/Viewer';
 import Spectator from './pages/Spectator';
+import RoleSelect from './pages/RoleSelect';
 import Profile from './pages/Profile';
 import Setup from './pages/Setup';
 import Terms from './pages/Terms';
@@ -26,6 +27,7 @@ export default function App() {
               {/* Public routes */}
               <Route path="/" element={<Home />} />
               <Route path="/watch/:code" element={<Spectator />} />
+              <Route path="/room/:code" element={<RoleSelect />} />
 
               {/* Auth required */}
               <Route

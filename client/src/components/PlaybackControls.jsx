@@ -22,29 +22,41 @@ export default function PlaybackControls({
   showLiveActions = false,
   goLiveLabel = 'Go live',
   resyncLabel = 'Re-sync',
+  _inline = false,
 }) {
-  return (
-    <div className="bg-pov-surface border border-pov-border rounded-lg p-3 sm:p-4 mt-2 sm:mt-3">
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <p className="text-[10px] sm:text-xs font-mono text-pov-muted uppercase tracking-wider">
-            {title}
-          </p>
-          {description && (
-            <p className="mt-1 text-[11px] sm:text-xs text-pov-muted leading-relaxed">
-              {description}
-            </p>
+  const content = (
+    <>
+      {!_inline && (
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            {title && (
+              <p className="text-[10px] sm:text-xs font-mono text-pov-muted uppercase tracking-wider">
+                {title}
+              </p>
+            )}
+            {description && (
+              <p className="mt-1 text-[11px] sm:text-xs text-pov-muted leading-relaxed">
+                {description}
+              </p>
+            )}
+          </div>
+          {activeLabel && (
+            <span className="inline-flex w-fit items-center gap-2 rounded-full border border-pov-border bg-pov-bg px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider text-pov-text">
+              <span className="text-pov-muted">Current POV</span>
+              <span className="max-w-[180px] truncate text-pov-accent">{activeLabel}</span>
+            </span>
           )}
         </div>
-        {activeLabel && (
-          <span className="inline-flex w-fit items-center gap-2 rounded-full border border-pov-border bg-pov-bg px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider text-pov-text">
-            <span className="text-pov-muted">Current POV</span>
-            <span className="max-w-[180px] truncate text-pov-accent">{activeLabel}</span>
-          </span>
-        )}
-      </div>
+      )}
 
-      <div className="mt-3 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+      {_inline && activeLabel && (
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-[10px] font-mono text-pov-muted">Nudge</span>
+          <span className="text-[10px] font-mono text-pov-accent truncate max-w-[140px]">{activeLabel}</span>
+        </div>
+      )}
+
+      <div className={`${_inline ? '' : 'mt-3 '}grid grid-cols-2 gap-2 sm:flex sm:flex-wrap`}>
         {PRIMARY_BUTTONS.map(({ label, delta, title: buttonTitle }) => (
           <button
             key={label}
@@ -95,6 +107,14 @@ export default function PlaybackControls({
           </div>
         )}
       </div>
+    </>
+  );
+
+  if (_inline) return <div>{content}</div>;
+
+  return (
+    <div className="bg-pov-surface border border-pov-border rounded-lg p-3 sm:p-4 mt-2 sm:mt-3">
+      {content}
     </div>
   );
 }
