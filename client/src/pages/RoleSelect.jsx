@@ -68,23 +68,34 @@ export default function RoleSelect() {
 
   const displayName = profile?.display_name || user?.email?.split('@')[0] || null;
 
-  // Auto-forward: if user just signed in via OAuth redirect (hash fragment present)
-  // and the session is joinable, skip the role-select screen and go straight to join.
+  // Auto-forward: if the user just signed in to join this session, redirect
+  // them straight to the join page.  The intent is saved in localStorage
+  // by joinAsParticipant() before the OAuth redirect.
   const [autoForwarded, setAutoForwarded] = useState(false);
   useEffect(() => {
-    if (autoForwarded) return;
-    // Supabase OAuth returns with #access_token=... in the URL
-    const hasOAuthReturn = window.location.hash.includes('access_token');
-    if (hasOAuthReturn && user && session && session.status === 'live') {
-      const active = (session.streams || []).filter((s) => s.is_active !== false);
-      if (active.length < 5 && session.participant_link) {
-        setAutoForwarded(true);
-        // Clean hash fragment from URL
-        window.history.replaceState(null, '', window.location.pathname);
-        navigate(`/join/${session.participant_link}`, { replace: true });
+    if (autoForwarded || !user || !session) return;
+    try {
+      const savedIntent = localStorage.getItem('povsync.joinIntent');
+      if (savedIntent) {
+        const intent = JSON.parse(savedIntent);
+        // Only auto-forward if the intent matches THIS room and is recent (< 10 min)
+        if (
+          intent.shareCode === code &&
+          Date.now() - intent.ts < 10 * 60 * 1000 &&
+          session.status === 'live' &&
+          session.participant_link
+        ) {
+          const active = (session.streams || []).filter((s) => s.is_active !== false);
+          if (active.length < 5) {
+            localStorage.removeItem('povsync.joinIntent');
+            setAutoForwarded(true);
+            navigate(`/join/${session.participant_link}`, { replace: true });
+            return;
+          }
+        }
       }
-    }
-  }, [user, session, autoForwarded, navigate]);
+    } catch (_) {}
+  }, [user, session, autoForwarded, navigate, code]);
 
   function joinAsSpectator() {
     navigate(`/watch/${session.spectator_link}`);
@@ -92,9 +103,14 @@ export default function RoleSelect() {
 
   function joinAsParticipant() {
     if (!user) {
-      // Not signed in — trigger Google sign-in and come back to this room page.
-      // After sign-in, Supabase redirects here; the user will be authenticated
-      // and can click Join again (or we auto-redirect — see effect below).
+      // Save intent so we can auto-forward after sign-in completes
+      try {
+        localStorage.setItem('povsync.joinIntent', JSON.stringify({
+          shareCode: code,
+          ts: Date.now(),
+        }));
+      } catch (_) {}
+      // Also save a general returnTo for the Home page fallback
       signInWithGoogle(`${window.location.origin}/room/${code}`);
       return;
     }

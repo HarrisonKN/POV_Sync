@@ -54,13 +54,31 @@ export default function Home() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  // If the user was redirected here with ?returnTo=... (e.g. from ProtectedRoute),
-  // bounce them back once they're signed in.
+  // If the user was redirected here after signing in, check for a saved
+  // return destination (from ProtectedRoute ?returnTo= or localStorage).
   useEffect(() => {
-    const returnTo = searchParams.get('returnTo');
-    if (returnTo && user) {
-      navigate(decodeURIComponent(returnTo), { replace: true });
+    if (!user) return;
+
+    // 1. Check URL query param (from ProtectedRoute)
+    const returnToParam = searchParams.get('returnTo');
+    if (returnToParam) {
+      navigate(decodeURIComponent(returnToParam), { replace: true });
+      return;
     }
+
+    // 2. Check localStorage (from signInWithGoogle)
+    try {
+      const savedReturn = localStorage.getItem('povsync.authReturnTo');
+      if (savedReturn) {
+        localStorage.removeItem('povsync.authReturnTo');
+        // Only follow if it's a relative path on our origin
+        const url = new URL(savedReturn, window.location.origin);
+        if (url.origin === window.location.origin) {
+          navigate(url.pathname + url.search + url.hash, { replace: true });
+          return;
+        }
+      }
+    } catch (_) {}
   }, [user, searchParams, navigate]);
 
   // Panel toggles

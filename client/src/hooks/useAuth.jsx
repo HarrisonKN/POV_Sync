@@ -80,7 +80,13 @@ export function AuthProvider({ children }) {
   }
 
   async function signInWithGoogle(returnTo) {
-    const redirectTo = returnTo || window.location.href;
+    // Save intended destination so we can redirect after OAuth completes.
+    // We can't rely on Supabase's redirectTo for deep links because the
+    // Supabase dashboard redirect allowlist may not include every path.
+    const redirectTo = returnTo || window.location.origin;
+    if (returnTo) {
+      try { localStorage.setItem('povsync.authReturnTo', returnTo); } catch (_) {}
+    }
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
