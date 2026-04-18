@@ -286,26 +286,35 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
       if (!active || !token) return;
 
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsHost = import.meta.env.VITE_WS_URL || `${wsProtocol}//${window.location.hostname}:3002`;
-      ws = new WebSocket(`${wsHost}/ws?sessionId=${sessionId}&role=participant&token=${encodeURIComponent(token)}`);
+      const wsHost = import.meta.env.VITE_WS_URL || `${wsProtocol}//${window.location.host}`;
+      ws = new WebSocket(`${wsHost}/ws?sessionId=${sessionId}&role=participant`);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log('[WS] Connected to sync server');
-        registeredStreamsRef.current.clear();
-        const cur = streamsRef.current;
-        if (cur.length > 0) {
-          ws.send(JSON.stringify({
-            type: 'REGISTER_STREAMS',
-            streams: cur.map((s) => ({ id: s.id, isAnchor: s.is_anchor })),
-          }));
-          cur.forEach((s) => registeredStreamsRef.current.add(s.id));
-        }
+        console.log('[WS] Connected — sending auth...');
+        // Send token as first message (not in URL) to avoid log/proxy leakage
+        ws.send(JSON.stringify({ type: 'AUTH', token }));
       };
 
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
+
+          // AUTH_OK — server confirmed auth; now register streams
+          if (msg.type === 'AUTH_OK') {
+            console.log('[WS] Authenticated — registering streams');
+            registeredStreamsRef.current.clear();
+            const cur = streamsRef.current;
+            if (cur.length > 0) {
+              ws.send(JSON.stringify({
+                type: 'REGISTER_STREAMS',
+                streams: cur.map((s) => ({ id: s.id, isAnchor: s.is_anchor })),
+              }));
+              cur.forEach((s) => registeredStreamsRef.current.add(s.id));
+            }
+            return;
+          }
+
           if (msg.type === 'SYNC_OFFSETS') {
             const { offsets: serverOffsets, confidence, startTimesAvailable, timestamp } = msg;
             setSyncStats({ offsets: serverOffsets || {}, confidence: confidence || {}, startTimesAvailable: startTimesAvailable || {}, anchorStreamId: msg.anchorStreamId, timestamp });
@@ -371,7 +380,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
     function connect() {
       if (!active) return;
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsHost = import.meta.env.VITE_WS_URL || `${wsProtocol}//${window.location.hostname}:3002`;
+      const wsHost = import.meta.env.VITE_WS_URL || `${wsProtocol}//${window.location.host}`;
       const ws = new WebSocket(`${wsHost}/ws?sessionId=${sessionId}&role=spectator`);
       wsRef.current = ws;
 

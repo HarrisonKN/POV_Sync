@@ -360,7 +360,11 @@ router.get('/room/:code', async (req, res) => {
       return res.status(404).json({ error: 'Session not found' });
     }
 
-    res.json({ session });
+    // The share_link IS the authorization gate — once the joiner has it they
+    // are allowed to see the internal routing codes so RoleSelect can redirect
+    // them to /join/:participant_link or /watch/:spectator_link.
+    const { share_link, ...sessionPayload } = session;
+    res.json({ session: sessionPayload });
   } catch (err) {
     console.error('Error fetching session by share_link:', err);
     res.status(500).json({ error: 'Failed to fetch session' });
@@ -385,7 +389,9 @@ router.get('/join/:code', async (req, res) => {
       return res.status(404).json({ error: 'Session not found' });
     }
 
-    res.json({ session });
+    // Strip spectator link — join participants shouldn't see it
+    const { spectator_link, ...safeSession } = session;
+    res.json({ session: safeSession });
   } catch (err) {
     console.error('Error fetching session:', err);
     res.status(500).json({ error: 'Failed to fetch session' });
@@ -407,7 +413,9 @@ router.get('/watch/:code', async (req, res) => {
       return res.status(404).json({ error: 'Session not found' });
     }
 
-    res.json({ session });
+    // Strip participant link — spectators should not see it
+    const { participant_link, ...safeSession } = session;
+    res.json({ session: safeSession });
   } catch (err) {
     console.error('Error fetching session:', err);
     res.status(500).json({ error: 'Failed to fetch session' });
@@ -449,11 +457,10 @@ router.post('/:id/streams', requireAuth, async (req, res) => {
       }
     }
 
-    // Use unauthenticated client for reads (SELECT policies allow public read)
-    // Verify session exists and is live
+    // Verify session exists and is live (select only needed fields, not *)
     const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
-      .select('*')
+      .select('id, host_id, status')
       .eq('id', id)
       .eq('status', 'live')
       .single();
@@ -696,7 +703,7 @@ router.patch('/:id/streams/:streamId/start-time', requireAuth, async (req, res) 
 // POST /api/sessions/:id/backfill-start-times — Fetch actualStartTime from YouTube API
 // for any stream in the session that is missing youtube_start_time.
 // Useful for VODs where start times were never captured during the live session.
-router.post('/:id/backfill-start-times', async (req, res) => {
+router.post('/:id/backfill-start-times', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
 

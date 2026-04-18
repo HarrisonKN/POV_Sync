@@ -86,6 +86,20 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' https://www.youtube.com https://player.twitch.tv https://static.twitchcdn.net",
+    "style-src 'self' 'unsafe-inline'",
+    "frame-src https://www.youtube.com https://player.twitch.tv",
+    "img-src 'self' data: https: blob:",
+    "connect-src 'self' https://*.supabase.co wss://*.supabase.co wss: ws:",
+    "font-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+  ].join('; '));
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
   next();
 });
 
@@ -144,7 +158,7 @@ app.get('/watch/:code', async (req, res, next) => {
       ? `Watch ${streamNames} in multi-POV sync`
       : `A ${session.status === 'live' ? 'live' : 'saved'} multi-POV session on POV Sync`;
 
-    const escHtml = (s) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    const escHtml = (s) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;');
 
     let html = fs.readFileSync(htmlPath, 'utf-8');
     const metaTags = [
@@ -191,7 +205,7 @@ app.get('/room/:code', async (req, res, next) => {
       ? `Join ${activeNames} watching in multi-POV sync`
       : `A ${session.status === 'live' ? 'live' : 'saved'} multi-POV session on POV Sync`;
 
-    const escHtml = (s) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    const escHtml = (s) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;');
 
     let html = fs.readFileSync(htmlPath, 'utf-8');
     const metaTags = [

@@ -1,10 +1,19 @@
 import { WebSocketServer } from 'ws';
 import * as syncManager from '../services/syncManager.js';
-import { createUserClient } from '../lib/supabase.js';
+import { createUserClient, supabaseAdmin } from '../lib/supabase.js';
 
 // Store active connections per session
 // Map<sessionId, Set<WebSocket>>
 const sessionClients = new Map();
+
+// Per-user per-session connection limit
+// Map<`${userId}:${sessionId}`, number>
+const connectionCounts = new Map();
+const MAX_CONNECTIONS_PER_USER_SESSION = 3;
+
+// Per-IP spectator connection limit (prevents anonymous WS flooding)
+const spectatorCounts = new Map();  // Map<ip, number>
+const MAX_SPECTATOR_CONNECTIONS_PER_IP = 10;
 
 // In-memory control delegation state: Map<sessionId, { hostUserId, delegateeUserId|null }>
 const controlState = new Map();
@@ -59,10 +68,13 @@ export function setupWebSocket(server) {
     const token = url.searchParams.get('token');
     const role = url.searchParams.get('role') || 'participant';
 
-    if (!sessionId) {
-      ws.close(1008, 'sessionId required');
+    if (!sessionId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) {
+      ws.close(1008, 'valid sessionId required');
       return;
     }
+
+    // Derive IP for spectator rate limiting
+    const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
 
     const attachClient = () => {
       ws.sessionId = sessionId;
@@ -86,39 +98,107 @@ export function setupWebSocket(server) {
     };
 
     if (role === 'spectator') {
-      attachClient();
-    } else {
-      if (!token) {
-        ws.close(1008, 'authentication required');
+      // Enforce per-IP spectator connection limit
+      const specCount = spectatorCounts.get(clientIp) || 0;
+      if (specCount >= MAX_SPECTATOR_CONNECTIONS_PER_IP) {
+        ws.close(1008, 'too many spectator connections');
         return;
       }
+      spectatorCounts.set(clientIp, specCount + 1);
+      ws._spectatorIp = clientIp;
+      attachClient();
+    } else {
+      // Participant auth: token sent as first message (not in URL) to avoid
+      // leaking JWTs in server logs, proxy logs, and browser history.
+      // Also support legacy ?token= query param for backward compatibility.
+      ws._pendingAuth = true;
 
-      const userClient = createUserClient(token);
-      userClient.auth.getUser(token)
-        .then(({ data, error }) => {
+      // Auto-close if no AUTH message within 10 seconds
+      ws._authTimeout = setTimeout(() => {
+        if (ws._pendingAuth && ws.readyState === 1) {
+          ws.close(1008, 'authentication timeout');
+        }
+      }, 10_000);
+
+      const authenticateParticipant = async (token) => {
+        try {
+          const userClient = createUserClient(token);
+          const { data, error } = await userClient.auth.getUser(token);
           if (error || !data?.user) {
             ws.close(1008, 'authentication required');
             return;
           }
-          // Connection may have closed during async auth
-          if (ws.readyState !== 1 /* OPEN */) return;
+          if (ws.readyState !== 1) return;
 
-          ws.userId = data.user.id;
+          const userId = data.user.id;
+
+          // Verify user is actually a participant in this session
+          const { count, error: memberErr } = await supabaseAdmin
+            .from('streams')
+            .select('id', { head: true, count: 'exact' })
+            .eq('session_id', sessionId)
+            .eq('user_id', userId);
+
+          if (memberErr || !count) {
+            ws.close(1008, 'not a member of this session');
+            return;
+          }
+          if (ws.readyState !== 1) return;
+
+          // Enforce per-user per-session connection limit
+          const connKey = `${userId}:${sessionId}`;
+          const current = connectionCounts.get(connKey) || 0;
+          if (current >= MAX_CONNECTIONS_PER_USER_SESSION) {
+            ws.close(1008, 'too many connections');
+            return;
+          }
+          connectionCounts.set(connKey, current + 1);
+          ws._connKey = connKey;
+
+          ws.userId = userId;
+          ws._pendingAuth = false;
+          clearTimeout(ws._authTimeout);
           attachClient();
-        })
-        .catch((err) => {
+
+          // Notify client that auth succeeded so it can send queued messages
+          try { ws.send(JSON.stringify({ type: 'AUTH_OK' })); } catch (_) {}
+        } catch (err) {
           console.error('[WS] Auth lookup failed:', err);
           ws.close(1011, 'authentication lookup failed');
-        });
+        }
+      };
+
+      // Support legacy ?token= query param (backward compatibility)
+      if (token) {
+        authenticateParticipant(token);
+      }
+
+      // Store for use in message handler
+      ws._authenticateParticipant = authenticateParticipant;
     }
 
     ws.on('message', (data) => {
       try {
+        // Spectators cannot send messages
         if (ws.role === 'spectator') {
           return;
         }
 
         const message = JSON.parse(data);
+
+        // AUTH — first-message authentication for participants
+        if (message.type === 'AUTH') {
+          if (!ws._pendingAuth) return; // already authenticated
+          if (typeof message.token !== 'string' || !message.token) {
+            ws.close(1008, 'invalid auth token');
+            return;
+          }
+          ws._authenticateParticipant(message.token);
+          return;
+        }
+
+        // Block all other messages until authenticated
+        if (ws._pendingAuth) return;
 
         // STREAM_START_TIME — client reports YouTube player.getVideoStartTime()
         // Route to syncManager (Layer 1 sync), do NOT echo to other clients
@@ -178,6 +258,23 @@ export function setupWebSocket(server) {
     });
 
     ws.on('close', () => {
+      // Clear auth timeout if still pending
+      if (ws._authTimeout) clearTimeout(ws._authTimeout);
+
+      // Decrement per-IP spectator connection count
+      if (ws._spectatorIp) {
+        const sc = (spectatorCounts.get(ws._spectatorIp) || 1) - 1;
+        if (sc <= 0) spectatorCounts.delete(ws._spectatorIp);
+        else spectatorCounts.set(ws._spectatorIp, sc);
+      }
+
+      // Decrement per-user connection count
+      if (ws._connKey) {
+        const c = (connectionCounts.get(ws._connKey) || 1) - 1;
+        if (c <= 0) connectionCounts.delete(ws._connKey);
+        else connectionCounts.set(ws._connKey, c);
+      }
+
       const clients = sessionClients.get(sessionId);
       if (clients) {
         clients.delete(ws);

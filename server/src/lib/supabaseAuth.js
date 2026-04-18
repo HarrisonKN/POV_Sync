@@ -1,4 +1,4 @@
-import { createUserClient, supabaseAdmin } from './supabase.js';
+import { createUserClient } from './supabase.js';
 
 /**
  * Create a Supabase client authenticated as a specific user.
@@ -24,7 +24,6 @@ export function requireAuth(req, res, next) {
     }
 
     req.supabase = userClient;
-    req.supabaseAdmin = supabaseAdmin;
     req.supabaseUser = { id: data.user.id, email: data.user.email };
     req.accessToken = token;
     next();
