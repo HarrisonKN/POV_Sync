@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useActiveSession } from '../hooks/useActiveSession';
 import { supabase } from '../lib/supabase';
@@ -52,6 +52,16 @@ export default function Home() {
   const { user, profile, signInWithGoogle, getAccessToken } = useAuth();
   const { activeSession } = useActiveSession();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  // If the user was redirected here with ?returnTo=... (e.g. from ProtectedRoute),
+  // bounce them back once they're signed in.
+  useEffect(() => {
+    const returnTo = searchParams.get('returnTo');
+    if (returnTo && user) {
+      navigate(decodeURIComponent(returnTo), { replace: true });
+    }
+  }, [user, searchParams, navigate]);
 
   // Panel toggles
   const [activePanel, setActivePanel] = useState(null); // 'create' | 'join' | null

@@ -79,11 +79,12 @@ export function AuthProvider({ children }) {
     }
   }
 
-  async function signInWithGoogle() {
+  async function signInWithGoogle(returnTo) {
+    const redirectTo = returnTo || window.location.href;
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: window.location.origin,
+        redirectTo,
       },
     });
     if (error) console.error('Google sign-in error:', error);
