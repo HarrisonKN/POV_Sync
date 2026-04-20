@@ -41,7 +41,7 @@ export default function ParticipantBar({
                 <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${startTimesAvailable[stream.id] ? 'bg-pov-success' : 'bg-pov-muted/40'}`} />
                 <span className="text-xs font-mono text-pov-text truncate">{stream.display_name}</span>
                 {stream.user_id === controlHolderUserId && (
-                  <span className="text-[10px] font-mono text-pov-accent flex-shrink-0">🎮</span>
+                  <span className="text-[10px] font-mono text-pov-accent flex-shrink-0">CTRL</span>
                 )}
               </div>
               {onKick && (
@@ -78,7 +78,6 @@ export default function ParticipantBar({
         <>
           <span className="text-pov-border hidden sm:inline">|</span>
           <span className="text-pov-accent flex items-center gap-1">
-            <span className="text-[10px]">🎮</span>
             <span className="hidden sm:inline">You have controls</span>
             <span className="sm:hidden">Controls</span>
           </span>

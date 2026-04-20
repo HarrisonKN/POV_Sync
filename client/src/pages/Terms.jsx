@@ -131,8 +131,7 @@ export default function Terms() {
 
       <Section title="11. Contact">
         <p>
-          Questions about these Terms?{' '}
-          <Link to="/contact" className="text-pov-accent hover:underline">Get in touch</Link>.
+          Questions about these Terms can be sent through the in-app feedback form.
         </p>
       </Section>
 
@@ -140,9 +139,6 @@ export default function Terms() {
       <div className="flex gap-4 pt-4 border-t border-pov-border/40">
         <Link to="/privacy" className="text-xs text-pov-muted hover:text-pov-accent transition-colors">
           Privacy Policy →
-        </Link>
-        <Link to="/contact" className="text-xs text-pov-muted hover:text-pov-accent transition-colors">
-          Contact →
         </Link>
       </div>
     </div>

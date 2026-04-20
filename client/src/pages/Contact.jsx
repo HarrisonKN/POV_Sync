@@ -17,7 +17,7 @@ function ContactCard({ icon, title, description, cta, href }) {
           rel="noopener noreferrer"
           className="text-xs font-medium text-pov-accent hover:text-pov-accent/80 transition-colors mt-auto"
         >
-          {cta} ↗
+          {cta}
         </a>
       ) : (
         <span className="text-xs text-pov-muted/50 mt-auto italic">{cta}</span>
@@ -41,28 +41,28 @@ export default function Contact() {
       {/* Contact cards */}
       <div className="grid gap-4 sm:grid-cols-2 mb-10">
         <ContactCard
-          icon="🐛"
+          icon="Bug"
           title="Bug Reports"
           description="Found something broken? Open an issue on GitHub with steps to reproduce, your browser, and what you expected to happen."
           cta="Open an issue on GitHub"
           href="https://github.com/HarrisonKN/POV_Sync/issues"
         />
         <ContactCard
-          icon="💡"
+          icon="Idea"
           title="Feature Requests"
           description="Have an idea to make POVSync better? Start a discussion on GitHub — community feedback shapes what gets built next."
           cta="Start a discussion"
           href="https://github.com/HarrisonKN/POV_Sync/discussions"
         />
         <ContactCard
-          icon="🔒"
+          icon="Data"
           title="Privacy & Data Requests"
           description="To request a copy of your data, correct inaccuracies, or ask for deletion under GDPR/CCPA, contact us via GitHub or the email below."
           cta="See Privacy Policy"
           href="/privacy"
         />
         <ContactCard
-          icon="📬"
+          icon="Help"
           title="General Enquiries"
           description="For anything else — partnerships, press, or general questions — reach out via GitHub."
           cta="GitHub profile"
@@ -72,7 +72,7 @@ export default function Contact() {
 
       {/* Setup help callout */}
       <div className="bg-pov-accent/5 border border-pov-accent/20 rounded-xl px-5 py-4 mb-8 flex items-start gap-4">
-        <span className="text-xl flex-shrink-0 mt-0.5">📖</span>
+        <span className="text-sm font-mono flex-shrink-0 mt-0.5">Guide</span>
         <div>
           <p className="text-sm font-semibold text-pov-text mb-1">Before you write in…</p>
           <p className="text-sm text-pov-muted leading-relaxed">

@@ -106,8 +106,7 @@ export default function Privacy() {
       <Section title="6. Data Retention">
         <p>
           Session and profile data is retained until you delete your account. You can request
-          deletion of your data at any time by{' '}
-          <Link to="/contact" className="text-pov-accent hover:underline">contacting us</Link>.
+          deletion of your data at any time by sending a request through the in-app feedback form.
           We will remove your data within 30 days of a verified request.
         </p>
       </Section>
@@ -121,8 +120,7 @@ export default function Privacy() {
           <li>Object to processing of your data.</li>
         </ul>
         <p>
-          To exercise any of these rights,{' '}
-          <Link to="/contact" className="text-pov-accent hover:underline">contact us</Link>.
+          To exercise any of these rights, use the in-app feedback form and include the details of your request.
         </p>
       </Section>
 
@@ -144,8 +142,7 @@ export default function Privacy() {
 
       <Section title="10. Contact">
         <p>
-          Privacy questions or data requests?{' '}
-          <Link to="/contact" className="text-pov-accent hover:underline">Get in touch</Link>.
+          Privacy questions or data requests can be sent through the in-app feedback form.
         </p>
       </Section>
 
@@ -153,9 +150,6 @@ export default function Privacy() {
       <div className="flex gap-4 pt-4 border-t border-pov-border/40">
         <Link to="/terms" className="text-xs text-pov-muted hover:text-pov-accent transition-colors">
           Terms of Service →
-        </Link>
-        <Link to="/contact" className="text-xs text-pov-muted hover:text-pov-accent transition-colors">
-          Contact →
         </Link>
       </div>
     </div>

@@ -260,7 +260,7 @@ export default function Profile() {
         <div className="bg-pov-accent/10 border border-pov-accent/20 rounded-xl px-4 sm:px-5 py-4 mb-6 animate-in">
           <div className="flex items-center justify-between gap-3 mb-3">
             <p className="text-xs font-mono text-pov-accent flex items-center gap-2">
-              <span>📼</span>
+              <span>VOD</span>
               Latest VOD
             </p>
             <Link
@@ -511,7 +511,7 @@ function SessionCard({ session, targetUserId }) {
 
         {isVod && (
           <div className="mt-3 inline-flex items-center gap-1.5 text-xs font-mono text-pov-accent">
-            <span>📼</span>
+            <span>VOD</span>
             Watch VOD
           </div>
         )}

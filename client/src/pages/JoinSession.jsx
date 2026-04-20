@@ -215,7 +215,7 @@ export default function JoinSession() {
   if (error && !session) {
     return (
       <ErrorState
-        icon="🔗"
+        icon="Link"
         title="Invalid join link"
         message={error}
         helper="Try pasting the participant link again, or ask your host to resend the join code."
@@ -228,7 +228,7 @@ export default function JoinSession() {
   if (session?.status === 'ended') {
     return (
       <ErrorState
-        icon="📼"
+        icon="VOD"
         title="Session has ended"
         message="This session is over, but you can still watch all the POVs as a VOD."
         helper="If you meant to join live, go back to the participant link for the current session."
@@ -244,7 +244,7 @@ export default function JoinSession() {
   if (activeStreams.length >= 5 && !alreadyJoined) {
     return (
       <ErrorState
-        icon="🛋️"
+        icon="Full"
         title="Session is full"
         message="This session already has 5 participants, the maximum allowed."
         helper="You can still join as a spectator, or ask the host to remove a participant before trying again."
@@ -325,7 +325,7 @@ export default function JoinSession() {
                     key={s.id}
                     className="flex items-center gap-2 text-sm text-pov-text bg-pov-bg border border-pov-border rounded-lg px-3 py-2"
                   >
-                    <span>{s.is_anchor ? '⚓' : '🟢'}</span>
+                    <span>{s.is_anchor ? 'A' : 'Live'}</span>
                     <span className="truncate">{s.display_name}</span>
                     {s.user_id === session?.host_id && (
                       <span className="text-[10px] text-pov-muted font-mono ml-auto flex-shrink-0">HOST</span>

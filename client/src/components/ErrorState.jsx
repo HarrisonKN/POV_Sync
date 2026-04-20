@@ -2,7 +2,7 @@
  * Full-page error state component.
  *
  * Props:
- *  - icon:    emoji or character shown large (default '⚠')
+ *  - icon:    short text or character shown large (default '!')
  *  - title:   bold heading
  *  - message: explanatory text
  *  - helper: optional short next-step hint
@@ -12,7 +12,7 @@
 import { Link } from 'react-router-dom';
 
 export default function ErrorState({
-  icon = '⚠',
+  icon = '!',
   title = 'Something went wrong',
   message,
   helper,

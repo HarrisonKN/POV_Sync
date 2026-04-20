@@ -83,7 +83,7 @@ export default function Viewer() {
   if (error) {
     return (
       <ErrorState
-        icon="📺"
+        icon="Room"
         title="Session not found"
         message={error}
         secondary={{ label: '← Home', to: '/' }}

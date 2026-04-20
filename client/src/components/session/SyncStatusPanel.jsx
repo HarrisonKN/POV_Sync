@@ -40,9 +40,9 @@ export default function SyncStatusPanel({
     if (isTwitch)
       return { dot: '●', color: 'text-pov-muted/40', label: 'Unsupported', detail: 'Twitch live timing is not persisted' };
     if (isAnchor && hasPersistedStart)
-      return { dot: '⚓', color: 'text-pov-accent', label: 'Baseline', detail: 'Current room baseline' };
+      return { dot: 'Anchor', color: 'text-pov-accent', label: 'Baseline', detail: 'Current room baseline' };
     if (isAnchor)
-      return { dot: '⚓', color: 'text-pov-muted', label: 'Anchor', detail: 'Waiting for confirmed start time' };
+      return { dot: 'Anchor', color: 'text-pov-muted', label: 'Anchor', detail: 'Waiting for confirmed start time' };
     if (hasPersistedStart)
       return { dot: '●', color: 'text-pov-success', label: 'Confirmed', detail: 'Saved in Supabase and ready for VOD' };
     if (hasLiveStart)

@@ -56,7 +56,7 @@ export default function PlaybackControls({
         </div>
       )}
 
-      <div className={`${_inline ? '' : 'mt-3 '}grid grid-cols-2 gap-2 sm:flex sm:flex-wrap`}>
+      <div className={`${_inline ? 'mx-auto max-w-[18rem] sm:max-w-none ' : 'mt-3 '}grid grid-cols-2 gap-2 sm:flex sm:flex-wrap ${_inline ? 'justify-center' : ''}`}>
         {PRIMARY_BUTTONS.map(({ label, delta, title: buttonTitle }) => (
           <button
             key={label}
@@ -70,8 +70,8 @@ export default function PlaybackControls({
         ))}
       </div>
 
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1">
+      <div className={`mt-2 flex flex-wrap items-center gap-2 ${_inline ? 'justify-center' : 'justify-between'}`}>
+        <div className={`flex items-center gap-1 ${_inline ? 'justify-center flex-wrap' : ''}`}>
           <span className="text-[8px] font-mono uppercase tracking-wide text-pov-muted/60">
             Frame nudge
           </span>

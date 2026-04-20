@@ -32,11 +32,19 @@ import SyncStatusPanel from '../components/session/SyncStatusPanel';
 const ROOM_TILE_MIN_WIDTH = 180;
 const ROOM_TILE_MAX_WIDTH = 840;
 const ROOM_TILE_DEFAULT_WIDTH = 300;
+const QUALITY_MODE_STORAGE_KEY = 'povsync.qualityMode';
+const POV_STRIP_LAYOUT_STORAGE_KEY = 'povsync.desktopPovStripLayout';
+const QUALITY_MODE_OPTIONS = [
+  { id: 'highest', label: 'Highest preferred', shortLabel: 'Highest', title: 'Force the highest available quality (4K/1440p/1080p)' },
+  { id: 'high', label: 'High quality', shortLabel: 'High', title: 'Prefer 720p–1080p for a good balance of quality and performance' },
+  { id: 'datasaver', label: 'Data saver', shortLabel: 'Low', title: 'Use lowest quality to save bandwidth' },
+  { id: 'auto', label: 'Auto', shortLabel: 'Auto', title: 'Let the platform choose quality automatically' },
+];
 const SEEK_COOLDOWN_MS = 4000;
 const VIEW_MODE_OPTIONS = [
   { id: 'stage', label: 'Stage view', shortLabel: 'Stage' },
   { id: 'wall', label: 'Wall view', shortLabel: 'Wall' },
-  { id: 'cycle', label: 'Cycle view', shortLabel: 'Cycle' },
+  // { id: 'cycle', label: 'Cycle view', shortLabel: 'Cycle' },  // TODO: re-enable after custom fullscreen rework
 ];
 
 export default function SessionRoom({ role, session, streams, onStreamsChange }) {
@@ -57,11 +65,27 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
       return Number.isFinite(saved) && saved > 0 ? saved : ROOM_TILE_DEFAULT_WIDTH;
     } catch (_) { return ROOM_TILE_DEFAULT_WIDTH; }
   });
+  const [qualityMode, setQualityMode] = useState(() => {
+    try {
+      const saved = localStorage.getItem(QUALITY_MODE_STORAGE_KEY);
+      return QUALITY_MODE_OPTIONS.some((option) => option.id === saved) ? saved : 'highest';
+    } catch (_) {
+      return 'highest';
+    }
+  });
   const [isMobileLayout, setIsMobileLayout] = useState(() =>
     typeof window !== 'undefined' ? window.matchMedia('(max-width: 639px)').matches : false
   );
+  const [desktopPovStripLayout, setDesktopPovStripLayout] = useState(() => {
+    try {
+      const saved = localStorage.getItem(POV_STRIP_LAYOUT_STORAGE_KEY);
+      return saved === 'horizontal' ? 'horizontal' : 'vertical';
+    } catch (_) {
+      return 'vertical';
+    }
+  });
 
-  const [isRoomHeaderCollapsed, setIsRoomHeaderCollapsed] = useState(false);
+  const [isRoomHeaderCollapsed, setIsRoomHeaderCollapsed] = useState(true);
   const [showSessionLinks, setShowSessionLinks] = useState(false);
   const [cycleUiVisible, setCycleUiVisible] = useState(true);
   const [cycleHoverStreamId, setCycleHoverStreamId] = useState(null);
@@ -188,6 +212,9 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
   const anchorStream = visibleStreams.find((s) => s.is_anchor);
 
   const roomTileMinWidth = Math.min(Math.max(roomTileWidth, ROOM_TILE_MIN_WIDTH), ROOM_TILE_MAX_WIDTH);
+  const desktopFocusProgress = (roomTileMinWidth - ROOM_TILE_MIN_WIDTH) / (ROOM_TILE_MAX_WIDTH - ROOM_TILE_MIN_WIDTH);
+  const desktopSidebarWidth = Math.round(320 - desktopFocusProgress * 110);
+  const desktopStageViewportOffset = Math.round(390 - desktopFocusProgress * 90);
   const wallItemCount = visibleStreams.length + (canAddPov ? 1 : 0);
   const wallColumnCount = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(Math.max(wallItemCount, 1)))));
   const wallGridMaxWidth = wallColumnCount * roomTileMinWidth + Math.max(0, wallColumnCount - 1) * 12;
@@ -197,6 +224,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
   const effectiveFilmstripTileWidth = isMobileLayout ? Math.min(240, Math.max(176, Math.round(roomTileMinWidth * 0.52))) : filmstripTileWidth;
   const isWallView = viewMode === 'wall';
   const isCycleView = viewMode === 'cycle';
+  const isDesktopHorizontalPovStrip = !isMobileLayout && viewMode === 'stage' && desktopPovStripLayout === 'horizontal';
   const activeMainStream = visibleStreams.find((s) => s.id === mainStreamId) ?? null;
   const cycleActiveIndex = useMemo(
     () => visibleStreams.findIndex((s) => s.id === mainStreamId),
@@ -217,6 +245,14 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
   useEffect(() => {
     try { localStorage.setItem('povsync.roomTileWidth', String(roomTileWidth)); } catch (_) {}
   }, [roomTileWidth]);
+
+  useEffect(() => {
+    try { localStorage.setItem(QUALITY_MODE_STORAGE_KEY, qualityMode); } catch (_) {}
+  }, [qualityMode]);
+
+  useEffect(() => {
+    try { localStorage.setItem(POV_STRIP_LAYOUT_STORAGE_KEY, desktopPovStripLayout); } catch (_) {}
+  }, [desktopPovStripLayout]);
 
   // ── Mobile layout detection ─────────────────────────────────────────────────
   useEffect(() => {
@@ -1166,23 +1202,23 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.28, ease: 'easeOut' }}
-        className="glass-panel mb-3 sm:mb-4 rounded-2xl border border-white/10 px-3 py-3 sm:px-4 sm:py-4"
+        className="glass-panel mb-2 sm:mb-3 rounded-2xl border border-white/10 px-3 py-2.5 sm:px-3.5 sm:py-3"
       >
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start justify-between gap-2.5">
           <div className="min-w-0 flex-1">
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded-full border ${!isVod ? 'text-pov-success bg-pov-success/10 border-pov-success/20' : 'text-pov-warning bg-pov-warning/10 border-pov-warning/20'}`}>
+            <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+              <span className={`text-[9px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-full border ${!isVod ? 'text-pov-success bg-pov-success/10 border-pov-success/20' : 'text-pov-warning bg-pov-warning/10 border-pov-warning/20'}`}>
                 {isVod ? 'VOD session' : 'Live session'}
               </span>
-              <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded-full border ${roleLabelClass}`}>
+              <span className={`text-[9px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-full border ${roleLabelClass}`}>
                 {roleLabel}
               </span>
-              <span className="text-[10px] sm:text-xs text-pov-muted font-mono">{visibleStreams.length} stream{visibleStreams.length !== 1 ? 's' : ''}</span>
+              <span className="text-[9px] sm:text-[10px] text-pov-muted font-mono">{visibleStreams.length} stream{visibleStreams.length !== 1 ? 's' : ''}</span>
             </div>
-            <h1 className="text-lg sm:text-xl font-bold tracking-tight text-pov-text">{session?.title || 'Live room'}</h1>
-            <p className="mt-1 text-xs sm:text-sm leading-relaxed text-pov-muted">
+            <h1 className="text-base sm:text-lg font-bold tracking-tight text-pov-text leading-tight">{session?.title || 'Live room'}</h1>
+            <p className="mt-0.5 text-[11px] sm:text-xs leading-relaxed text-pov-muted">
               {isRoomHeaderCollapsed
-                ? `${hostName} · ${visibleStreams.length} stream${visibleStreams.length !== 1 ? 's' : ''}`
+                ? `${hostName} · ${visibleStreams.length} stream${visibleStreams.length !== 1 ? 's' : ''} · ${isVod ? 'VOD' : 'Live'}`
                 : isHost
                 ? `You're hosting. Everyone in the room follows your sync state.`
                 : isSpectator
@@ -1190,17 +1226,17 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
                 : `${hostName} controls room sync. You can still focus on your own POV.`}
             </p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
             {isHost && session?.status === 'live' && (
-              <button onClick={handleEndSession} disabled={ending} className="text-[10px] sm:text-xs font-mono bg-pov-danger/10 border border-pov-danger/30 text-pov-danger hover:bg-pov-danger/20 rounded-lg px-3 py-2 transition-colors disabled:opacity-50">{ending ? 'Ending...' : '⏹ End'}</button>
+              <button onClick={handleEndSession} disabled={ending} className="text-[10px] sm:text-xs font-mono bg-pov-danger/10 border border-pov-danger/30 text-pov-danger hover:bg-pov-danger/20 rounded-lg px-2.5 py-1.5 transition-colors disabled:opacity-50">{ending ? 'Ending...' : 'End'}</button>
             )}
             {!isHost && !isSpectator && session?.status === 'live' && (
-              <button onClick={handleLeaveSession} disabled={leaving} className="text-[10px] sm:text-xs font-mono bg-pov-danger/10 border border-pov-danger/30 text-pov-danger hover:bg-pov-danger/20 rounded-lg px-3 py-2 transition-colors disabled:opacity-50">{leaving ? 'Leaving...' : '🚪 Leave'}</button>
+              <button onClick={handleLeaveSession} disabled={leaving} className="text-[10px] sm:text-xs font-mono bg-pov-danger/10 border border-pov-danger/30 text-pov-danger hover:bg-pov-danger/20 rounded-lg px-2.5 py-1.5 transition-colors disabled:opacity-50">{leaving ? 'Leaving...' : 'Leave'}</button>
             )}
             <button
               type="button"
               onClick={() => setIsRoomHeaderCollapsed((c) => !c)}
-              className="shrink-0 rounded-xl border border-pov-border bg-pov-bg px-3 py-2 text-[10px] sm:text-xs font-mono text-pov-text transition-colors hover:bg-pov-border/30"
+              className="shrink-0 rounded-xl border border-pov-border bg-pov-bg px-2.5 py-1.5 text-[10px] sm:text-xs font-mono text-pov-text transition-colors hover:bg-pov-border/30"
             >
               {isRoomHeaderCollapsed ? '▾ Expand' : '▴ Collapse'}
             </button>
@@ -1217,14 +1253,14 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
               className="overflow-hidden"
             >
               {/* Info pills */}
-              <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <div className="mt-2.5 grid grid-cols-2 sm:grid-cols-3 gap-2">
                 <InfoPill label="Host" value={hostName} />
                 <InfoPill label="State" value={isHost ? 'You manage sync' : isSpectator ? 'Read-only' : hasControl ? 'You can adjust sync' : 'Following host sync'} />
               </div>
 
               {/* Share link — opt-in reveal */}
               {session && !isVod && (
-                <div className="mt-3">
+                <div className="mt-2.5">
                   {showSessionLinks ? (
                     <div className="space-y-2">
                       <LinkRow label="Invite link" url={`${window.location.origin}/room/${session.share_link}`} />
@@ -1232,7 +1268,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
                     </div>
                   ) : (
                     <button type="button" onClick={() => setShowSessionLinks(true)} className="text-[10px] sm:text-xs font-mono bg-pov-bg border border-pov-border text-pov-text hover:bg-pov-border/30 rounded px-3 py-1.5 transition-colors">
-                      🔗 Show invite link
+                      Show invite link
                     </button>
                   )}
                 </div>
@@ -1251,8 +1287,12 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
       )}
 
       {/* ══════════════════════════════════════════════════════════════════════
-           SECTION 2 — Viewer / Frames
+           SECTION 2 — Viewer / Frames + Controls (desktop: side-by-side)
            ══════════════════════════════════════════════════════════════════════ */}
+      <div className={isMobileLayout || isDesktopHorizontalPovStrip ? '' : 'flex gap-3 items-start'}>
+
+      {/* ── Left column: Stage + Controls ────────────────────────────────────── */}
+      <div className={isMobileLayout || isDesktopHorizontalPovStrip ? '' : 'flex-1 min-w-0'}>
 
       {/* Stage / Wall / Cycle */}
       <div className={`mb-2 sm:mb-3 ${isWallView ? '' : 'flex justify-center'}`}>
@@ -1267,8 +1307,8 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
                 ...(effectiveWallGridMaxWidth ? { maxWidth: `${effectiveWallGridMaxWidth}px` } : {}),
               }
             : {
-                width: 'min(100%, calc((100vh - 360px) * 16 / 9))',
-                maxHeight: 'calc(100vh - 360px)',
+                width: isMobileLayout ? 'min(100%, calc((100vh - 360px) * 16 / 9))' : `min(100%, calc((100vh - ${desktopStageViewportOffset}px) * 16 / 9))`,
+                maxHeight: isMobileLayout ? 'calc(100vh - 360px)' : `calc(100vh - ${desktopStageViewportOffset}px)`,
                 minHeight: isCycleView ? (isMobileLayout ? '70vh' : 'min(78vh, 920px)') : '220px',
                 height: isCycleView ? (isMobileLayout ? '70vh' : 'min(78vh, 920px)') : undefined,
                 backgroundColor: isCycleView ? '#000000' : undefined,
@@ -1301,6 +1341,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
                     streamUrl={stream.youtube_url}
                     platform={stream.platform}
                     isMain={isActive}
+                    qualityMode={qualityMode}
                     onReady={(player) => handlePlayerReady(stream.id, player)}
                     onStateChange={(state) => handleStageStateChange(stream.id, state)}
                     onError={(errorCode) => handleStageError(stream.id, errorCode)}
@@ -1309,11 +1350,13 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
 
                   {isWallView ? (
                     <>
-                      <button type="button" onClick={() => handleSwapStream(stream.id)} className="absolute inset-0 z-20" aria-label={`Focus ${stream.display_name}`} />
+                      {!isActive && (
+                        <button type="button" onClick={() => handleSwapStream(stream.id)} className="absolute inset-0 z-20" aria-label={`Focus ${stream.display_name}`} />
+                      )}
                       <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/85 to-transparent px-3 py-2 pointer-events-none z-10">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-xs font-semibold text-white truncate">{stream.display_name}</span>
-                          <StatusIndicators stream={stream} isHost={stream.user_id === session?.host_id} isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId} />
+                          <StatusIndicators stream={stream} isHost={stream.user_id === session?.host_id} isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId} showSyncStatus={!isVod} />
                         </div>
                       </div>
                       {isActive && <div className="absolute top-0 left-0 right-0 h-0.5 bg-pov-accent z-10" />}
@@ -1322,7 +1365,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
                     <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-4 py-3 pointer-events-none z-10">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-semibold text-white">{stream.display_name}</span>
-                        <StatusIndicators stream={stream} isHost={stream.user_id === session?.host_id} isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId} />
+                        <StatusIndicators stream={stream} isHost={stream.user_id === session?.host_id} isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId} showSyncStatus={!isVod} />
                       </div>
                     </div>
                   ) : null}
@@ -1355,7 +1398,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
                   <div className="flex items-center gap-2">
                     <span className="truncate text-xl font-semibold text-white sm:text-3xl">{activeMainStream?.display_name || 'POV'}</span>
                     {activeMainStream && (
-                      <StatusIndicators stream={activeMainStream} isHost={activeMainStream.user_id === session?.host_id} isControlDelegated={!!controlHolderUserId && activeMainStream.user_id === controlHolderUserId} />
+                      <StatusIndicators stream={activeMainStream} isHost={activeMainStream.user_id === session?.host_id} isControlDelegated={!!controlHolderUserId && activeMainStream.user_id === controlHolderUserId} showSyncStatus={!isVod} />
                     )}
                   </div>
                 </div>
@@ -1376,10 +1419,10 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
         </motion.div>
       </div>
 
-      {/* Filmstrip (stage view only) */}
+      {/* Filmstrip — mobile: horizontal scroll below stage */}
+      {isMobileLayout && (
       <div
-        className={`${viewMode === 'stage' ? 'mb-2 pb-1' : 'hidden'} ${isMobileLayout ? '-mx-2.5 flex snap-x snap-mandatory gap-2 overflow-x-auto px-2.5 pb-2' : 'grid gap-2 sm:gap-3 overflow-x-auto'}`}
-        style={isMobileLayout ? undefined : { gridTemplateColumns: `repeat(auto-fill, minmax(${effectiveFilmstripTileWidth}px, ${effectiveFilmstripTileWidth}px))`, justifyContent: 'center' }}
+        className={`${viewMode === 'stage' ? 'mb-2 pb-1' : 'hidden'} -mx-2.5 flex snap-x snap-mandatory gap-2 overflow-x-auto px-2.5 pb-2`}
       >
         {visibleStreams.map((stream) => {
           const isActive = stream.id === mainStreamId;
@@ -1392,6 +1435,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
                 <div className="relative aspect-video overflow-hidden bg-black">
                   <div className="pointer-events-none absolute inset-0">
                     <StreamPlayer streamUrl={stream.youtube_url} platform={stream.platform} isMain={false}
+                      qualityMode={qualityMode}
                       onReady={(player) => handlePlayerReady(`film-${stream.id}`, player)} className="h-full w-full" />
                   </div>
                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent" />
@@ -1407,7 +1451,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
                       <p className="mt-0.5 text-[10px] font-mono uppercase tracking-wide text-white/55">{isActive ? 'On stage' : 'Tap to focus'}</p>
                       {(() => { const utc = getUtcTimeLabel(stream); return utc ? <p className="mt-0.5 text-[10px] font-mono tabular-nums text-white/45">{utc}</p> : null; })()}
                     </div>
-                    <StatusIndicators stream={stream} isHost={stream.user_id === session?.host_id} isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId} />
+                    <StatusIndicators stream={stream} isHost={stream.user_id === session?.host_id} isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId} showSyncStatus={!isVod} />
                   </div>
                 </div>
               </motion.button>
@@ -1423,60 +1467,217 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
 
         {visibleStreams.length === 0 && !canAddPov && (
           [...Array(4)].map((_, i) => (
-            <div key={i} className="w-full sm:flex-shrink-0 sm:w-48 aspect-video rounded-lg border border-dashed border-pov-border bg-pov-surface/50 animate-pulse flex items-center justify-center">
+            <div key={i} className="w-[210px] shrink-0 snap-start aspect-video rounded-lg border border-dashed border-pov-border bg-pov-surface/50 animate-pulse flex items-center justify-center">
               <span className="text-[10px] text-pov-muted/40 font-mono">POV {i + 1}</span>
             </div>
           ))
         )}
       </div>
+      )}
 
       {/* ══════════════════════════════════════════════════════════════════════
            SECTION 3 — Controls (unified, all roles)
            ══════════════════════════════════════════════════════════════════════ */}
       {visibleStreams.length > 0 && (
-        <div className="bg-pov-surface border border-pov-border rounded-lg p-3 sm:p-4 mt-2 sm:mt-3 space-y-3">
-          <p className="text-[10px] sm:text-xs font-mono text-pov-muted uppercase tracking-wider">Controls</p>
+        <div className="mt-2 space-y-2">
 
-          {/* Row 1 — View mode + Scale */}
-          <div className="flex flex-wrap items-center gap-2">
-            {VIEW_MODE_OPTIONS.map((mode) => (
-              <button key={mode.id} type="button" onClick={() => setViewMode(mode.id)}
-                className={`text-[10px] sm:text-xs font-mono border rounded px-2.5 sm:px-3 py-1.5 transition-colors ${viewMode === mode.id ? 'border-pov-accent/40 bg-pov-accent/12 text-pov-text' : 'bg-pov-bg border-pov-border text-pov-text hover:bg-pov-border/30'}`}>
-                {isMobileLayout ? mode.shortLabel : mode.label}
-              </button>
-            ))}
-            <div className="flex flex-1 min-w-[180px] max-w-xs items-center gap-2 rounded-lg border border-pov-border bg-pov-bg px-3 py-1.5">
-              <span className="text-[10px] sm:text-xs font-mono text-pov-muted whitespace-nowrap">Scale</span>
-              <input type="range" min={ROOM_TILE_MIN_WIDTH} max={ROOM_TILE_MAX_WIDTH} step="20" value={roomTileWidth} onChange={(e) => setRoomTileWidth(Number(e.target.value))} className="flex-1 accent-pov-accent" />
-              <span className="w-12 text-right text-[10px] font-mono text-pov-text tabular-nums">{roomTileWidth}px</span>
+          {!isMobileLayout && viewMode === 'stage' && desktopPovStripLayout === 'horizontal' && visibleStreams.length > 0 && (
+            <div className="rounded-2xl border border-pov-border bg-pov-surface p-3 shadow-[0_12px_40px_rgba(0,0,0,0.12)]">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <span className="text-[10px] font-mono text-pov-muted uppercase tracking-wider">POVs</span>
+                <span className="text-[10px] font-mono text-pov-muted/80">Horizontal strip</span>
+              </div>
+              <div className="flex gap-3 overflow-x-auto pb-1">
+                {visibleStreams.map((stream) => {
+                  const isActive = stream.id === mainStreamId;
+                  return (
+                    <div key={`desktop-strip-${stream.id}`} className="w-[240px] shrink-0 flex flex-col gap-1">
+                      <motion.button type="button" layout whileHover={{ y: -1, scale: 1.01 }} whileTap={{ scale: 0.985 }} transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+                        onClick={() => handleSwapStream(stream.id)}
+                        className={`group relative overflow-hidden rounded-xl border text-left ${isActive ? 'border-pov-accent/70 shadow-[0_8px_24px_rgba(108,92,231,0.18)]' : 'border-white/8 hover:border-white/18'} glass-card`}
+                      >
+                        <div className="relative aspect-video overflow-hidden bg-black">
+                          <div className="pointer-events-none absolute inset-0">
+                            <StreamPlayer streamUrl={stream.youtube_url} platform={stream.platform} isMain={false}
+                              qualityMode={qualityMode}
+                              onReady={(player) => handlePlayerReady(`film-${stream.id}`, player)} className="h-full w-full" />
+                          </div>
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent" />
+                          {stream.is_anchor && (
+                            <div className="absolute left-2 top-2 rounded-full border border-white/10 bg-black/35 px-1.5 py-0.5 text-[8px] font-mono uppercase tracking-wide text-white/80 backdrop-blur-md">Anchor</div>
+                          )}
+                          {isActive && <div className="absolute inset-x-0 top-0 h-0.5 bg-pov-accent shadow-[0_0_18px_rgba(108,92,231,0.6)]" />}
+                        </div>
+                        <div className="absolute inset-x-0 bottom-0 p-2 pointer-events-none">
+                          <div className="glass-pill flex items-center justify-between gap-1.5 rounded-lg px-2 py-1.5">
+                            <div className="min-w-0">
+                              <p className="truncate text-[10px] font-semibold text-white">{stream.display_name}</p>
+                              <p className="text-[8px] font-mono uppercase tracking-wide text-white/55">{isActive ? 'On stage' : 'Click to focus'}</p>
+                            </div>
+                            <StatusIndicators stream={stream} isHost={stream.user_id === session?.host_id} isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId} showSyncStatus={!isVod} />
+                          </div>
+                        </div>
+                      </motion.button>
+
+                      {hasControl && !isVod && !isSpectator && (
+                        <OffsetControls streamId={stream.id} isAnchor={stream.is_anchor} offset={offsets[stream.id] ?? 0} onStep={stepOffset} onPromoteAnchor={handlePromoteAnchor} />
+                      )}
+                    </div>
+                  );
+                })}
+
+                {canAddPov && renderAddPovTile('w-[240px] shrink-0 flex flex-col gap-1', 'relative aspect-video rounded-lg border-2 border-dashed border-pov-accent/50 overflow-hidden transition-all hover:border-pov-accent')}
+              </div>
+            </div>
+          )}
+
+          {/* ─ Playback bar ─ Primary actions ─────────────────────────────────── */}
+          <div className={`bg-pov-surface border border-pov-border rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 shadow-[0_12px_40px_rgba(0,0,0,0.12)] ${isMobileLayout ? 'sticky bottom-3 z-20 backdrop-blur-xl shadow-[0_18px_50px_rgba(0,0,0,0.25)]' : ''}`}>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              {/* Left — View mode */}
+              <div className="inline-flex rounded-lg border border-pov-border overflow-hidden shrink-0">
+                {VIEW_MODE_OPTIONS.map((mode) => (
+                  <button key={mode.id} type="button" onClick={() => setViewMode(mode.id)}
+                    className={`text-[10px] sm:text-xs font-mono px-2.5 py-1.5 transition-colors border-r border-pov-border last:border-r-0 ${viewMode === mode.id ? 'bg-pov-accent/15 text-pov-accent' : 'bg-pov-bg text-pov-muted hover:text-pov-text hover:bg-pov-border/30'}`}>
+                    {isMobileLayout ? mode.shortLabel : mode.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Center — Playback + Sync */}
+              <div className="flex items-center gap-2 flex-wrap justify-center">
+                <button type="button" onClick={handlePlayAll}
+                  className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-medium bg-pov-accent/15 border border-pov-accent/30 text-pov-accent rounded-lg px-3.5 py-2 hover:bg-pov-accent/25 active:bg-pov-accent/35 transition-colors">
+                  <span>Play All</span>
+                </button>
+                <button type="button" onClick={handlePauseAll}
+                  className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-medium bg-pov-bg border border-pov-border text-pov-text rounded-lg px-3.5 py-2 hover:bg-pov-border/40 active:bg-pov-accent/10 transition-colors">
+                  <span>Pause All</span>
+                </button>
+
+                <span className="hidden sm:block w-px h-6 bg-pov-border/60 mx-1" />
+
+                {!isVod && (
+                  <button type="button" onClick={isHost || hasControl ? handleGoLive : handleGoLiveLocal}
+                    className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-medium bg-pov-bg border border-pov-border text-pov-text rounded-lg px-3.5 py-2 hover:bg-pov-border/40 active:bg-pov-accent/10 transition-colors">
+                    <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" /> Go Live
+                  </button>
+                )}
+                <button type="button" onClick={isHost || hasControl ? handleSyncToUtc : handleResyncLocal}
+                  className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-medium bg-pov-bg border border-pov-border text-pov-text rounded-lg px-3.5 py-2 hover:bg-pov-border/40 active:bg-pov-accent/10 transition-colors">
+                  <span className="text-sm">↻</span> Re-sync
+                </button>
+              </div>
+
+              {/* Right — Quality */}
+              <div className="inline-flex rounded-lg border border-pov-border overflow-hidden shrink-0">
+                {QUALITY_MODE_OPTIONS.map((option) => (
+                  <button key={option.id} type="button" onClick={() => setQualityMode(option.id)}
+                    title={option.title}
+                    className={`text-[10px] sm:text-xs font-mono px-2.5 py-1.5 transition-colors border-r border-pov-border last:border-r-0 ${qualityMode === option.id ? 'bg-pov-accent/15 text-pov-accent' : 'bg-pov-bg text-pov-muted hover:text-pov-text hover:bg-pov-border/30'}`}>
+                    {isMobileLayout ? option.shortLabel : option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {isVod && <div className="text-center mt-1.5"><span className="text-[10px] text-pov-muted/60 font-mono">VOD — Scrub the anchor to move all POVs</span></div>}
+          </div>
+
+          {/* ─ Nudge + Preferences ─────────────────────────────────────────────── */}
+          <div className="bg-pov-surface border border-pov-border rounded-2xl p-3 sm:p-4 shadow-[0_12px_40px_rgba(0,0,0,0.12)]">
+            {mainStreamId && (
+              <div className="mb-3">
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <span className="text-[10px] sm:text-xs font-mono text-pov-muted uppercase tracking-wider">Nudge</span>
+                  <span className="text-[10px] sm:text-xs font-mono text-pov-accent truncate max-w-[180px]">{visibleStreams.find((s) => s.id === mainStreamId)?.display_name || 'POV'}</span>
+                </div>
+                <PlaybackControls
+                  title={null}
+                  description={null}
+                  activeLabel={null}
+                  onStep={handleLocalPlaybackStep}
+                  onGoLive={null}
+                  onResync={null}
+                  showLiveActions={false}
+                  _inline
+                />
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-3 border-t border-pov-border/60 pt-3">
+              {!isMobileLayout && (
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <span className="text-[10px] font-mono text-pov-muted uppercase tracking-wider whitespace-nowrap">Main view</span>
+                  <input type="range" min={ROOM_TILE_MIN_WIDTH} max={ROOM_TILE_MAX_WIDTH} step="20" value={roomTileWidth} onChange={(e) => setRoomTileWidth(Number(e.target.value))}
+                    className="w-28 accent-pov-accent" />
+                  <span className="text-[10px] font-mono text-pov-muted whitespace-nowrap">{desktopFocusProgress > 0.66 ? 'Large' : desktopFocusProgress > 0.33 ? 'Balanced' : 'Compact'}</span>
+                  {viewMode === 'stage' && (
+                    <button
+                      type="button"
+                      onClick={() => setDesktopPovStripLayout((current) => current === 'vertical' ? 'horizontal' : 'vertical')}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-pov-border bg-pov-bg px-2.5 py-1.5 text-[10px] font-mono text-pov-text transition-colors hover:bg-pov-border/30"
+                      title={desktopPovStripLayout === 'vertical' ? 'Move POV frames into a horizontal strip below the main view' : 'Move POV frames into a vertical sidebar beside the main view'}
+                    >
+                      <span>POVs {desktopPovStripLayout === 'vertical' ? 'Vertical' : 'Horizontal'}</span>
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Row 2 — Nudge + frame buttons (inline) */}
-          {mainStreamId && (
-            <PlaybackControls
-              title={null}
-              description={null}
-              activeLabel={visibleStreams.find((s) => s.id === mainStreamId)?.display_name || 'POV'}
-              onStep={handleLocalPlaybackStep}
-              onGoLive={null}
-              onResync={null}
-              showLiveActions={false}
-              _inline
-            />
-          )}
-
-          {/* Row 3 — Playback + sync actions */}
-          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-pov-border/50">
-            <ControlButton label="▶ Play All" onClick={handlePlayAll} />
-            <ControlButton label="⏸ Pause All" onClick={handlePauseAll} />
-            {!isVod && <ControlButton label="📡 Go Live" onClick={isHost || hasControl ? handleGoLive : handleGoLiveLocal} />}
-            <ControlButton label="🔁 Re-sync" onClick={isHost || hasControl ? handleResync : handleResyncLocal} />
-            <ControlButton label="🕐 UTC Sync" onClick={handleSyncToUtc} title="Align all POVs to the same real-world UTC moment" />
-            {isVod && <span className="text-[10px] text-pov-muted/60 font-mono">📼 VOD — Scrub the anchor to move all POVs</span>}
-          </div>
         </div>
       )}
+
+      </div>{/* end left column */}
+
+      {/* ── Right sidebar: POV filmstrip (desktop, stage view) ─────────────── */}
+      {!isMobileLayout && viewMode === 'stage' && desktopPovStripLayout === 'vertical' && visibleStreams.length > 0 && (
+        <div className="shrink-0 flex flex-col gap-2 max-h-[calc(100vh-160px)] overflow-y-auto pr-1 scrollbar-thin" style={{ width: `${desktopSidebarWidth}px` }}>
+          <span className="text-[10px] font-mono text-pov-muted uppercase tracking-wider mb-1">POVs</span>
+          {visibleStreams.map((stream) => {
+            const isActive = stream.id === mainStreamId;
+            return (
+              <div key={`side-wrap-${stream.id}`} className="flex flex-col gap-1">
+                <motion.button type="button" layout whileHover={{ y: -1, scale: 1.01 }} whileTap={{ scale: 0.985 }} transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+                  onClick={() => handleSwapStream(stream.id)}
+                  className={`group relative overflow-hidden rounded-xl border text-left ${isActive ? 'border-pov-accent/70 shadow-[0_8px_24px_rgba(108,92,231,0.18)]' : 'border-white/8 hover:border-white/18'} glass-card`}
+                >
+                  <div className="relative aspect-video overflow-hidden bg-black">
+                    <div className="pointer-events-none absolute inset-0">
+                      <StreamPlayer streamUrl={stream.youtube_url} platform={stream.platform} isMain={false}
+                        qualityMode={qualityMode}
+                        onReady={(player) => handlePlayerReady(`film-${stream.id}`, player)} className="h-full w-full" />
+                    </div>
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent" />
+                    {stream.is_anchor && (
+                      <div className="absolute left-2 top-2 rounded-full border border-white/10 bg-black/35 px-1.5 py-0.5 text-[8px] font-mono uppercase tracking-wide text-white/80 backdrop-blur-md">Anchor</div>
+                    )}
+                    {isActive && <div className="absolute inset-x-0 top-0 h-0.5 bg-pov-accent shadow-[0_0_18px_rgba(108,92,231,0.6)]" />}
+                  </div>
+                  <div className="absolute inset-x-0 bottom-0 p-2 pointer-events-none">
+                    <div className="glass-pill flex items-center justify-between gap-1.5 rounded-lg px-2 py-1.5">
+                      <div className="min-w-0">
+                        <p className="truncate text-[10px] font-semibold text-white">{stream.display_name}</p>
+                        <p className="text-[8px] font-mono uppercase tracking-wide text-white/55">{isActive ? 'On stage' : 'Click to focus'}</p>
+                      </div>
+                      <StatusIndicators stream={stream} isHost={stream.user_id === session?.host_id} isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId} showSyncStatus={!isVod} />
+                    </div>
+                  </div>
+                </motion.button>
+
+                {hasControl && !isVod && !isSpectator && (
+                  <OffsetControls streamId={stream.id} isAnchor={stream.is_anchor} offset={offsets[stream.id] ?? 0} onStep={stepOffset} onPromoteAnchor={handlePromoteAnchor} />
+                )}
+              </div>
+            );
+          })}
+
+          {canAddPov && renderAddPovTile('flex flex-col gap-1', 'relative aspect-video rounded-lg border-2 border-dashed border-pov-accent/50 overflow-hidden transition-all hover:border-pov-accent')}
+        </div>
+      )}
+
+      </div>{/* end desktop flex wrapper */}
 
       {/* ══════════════════════════════════════════════════════════════════════
            SECTION 4 — Host Controls (host-exclusive)

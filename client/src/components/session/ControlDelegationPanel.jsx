@@ -18,7 +18,7 @@ export default function ControlDelegationPanel({ streams, session, controlHolder
           </span>
           {controlHolderUserId && (
             <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-pov-accent/30 text-pov-accent bg-pov-accent/10">
-              🎮 Active
+              Active
             </span>
           )}
         </div>
@@ -42,7 +42,7 @@ export default function ControlDelegationPanel({ streams, session, controlHolder
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-mono text-pov-text">{stream.display_name}</span>
                   {isHolder && (
-                    <span className="text-[10px] font-mono text-pov-accent">🎮 has controls</span>
+                    <span className="text-[10px] font-mono text-pov-accent">has controls</span>
                   )}
                 </div>
                 {isHolder ? (

@@ -69,7 +69,7 @@ export default function Spectator() {
   if (error) {
     return (
       <ErrorState
-        icon="👁️"
+        icon="View"
         title="Room not found"
         message={error}
         secondary={{ label: '← Home', to: '/' }}

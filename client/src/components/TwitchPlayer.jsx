@@ -1,6 +1,57 @@
 import { useEffect, useRef, memo } from 'react';
 import { extractTwitchChannel } from '../../../shared/helpers.js';
 
+const TWITCH_QUALITY_PREFERENCE = [
+  'chunked',
+  '1080p60',
+  '1080p30',
+  '720p60',
+  '720p30',
+  '480p30',
+  '360p30',
+  '160p30',
+  'auto',
+];
+
+function getBestTwitchQuality(player) {
+  if (!player || typeof player.getQualities !== 'function') return null;
+
+  const qualities = player.getQualities?.() || [];
+  const available = qualities
+    .map((quality) => (typeof quality === 'string' ? quality : quality?.name))
+    .filter(Boolean);
+
+  for (const quality of TWITCH_QUALITY_PREFERENCE) {
+    if (available.includes(quality)) return quality;
+  }
+
+  return available[0] || null;
+}
+
+function applyBestTwitchQuality(player) {
+  if (!player || typeof player.setQuality !== 'function') return;
+
+  const bestQuality = getBestTwitchQuality(player);
+  if (!bestQuality || bestQuality === 'auto') return;
+
+  try {
+    player.setQuality(bestQuality);
+  } catch (_) {}
+}
+
+function applyTwitchQualityMode(player, qualityMode) {
+  if (!player || typeof player.setQuality !== 'function') return;
+
+  if (qualityMode === 'auto') {
+    try {
+      player.setQuality('auto');
+    } catch (_) {}
+    return;
+  }
+
+  applyBestTwitchQuality(player);
+}
+
 /**
  * Load the Twitch Embed API script once. Returns a promise that resolves
  * when Twitch.Player is available globally. Safe to call multiple times.
@@ -56,6 +107,7 @@ function loadTwitchAPI() {
 function TwitchPlayer({
   twitchUrl,
   isMain = false,
+  qualityMode = 'highest',
   onReady,
   onStateChange,
   onError,
@@ -67,11 +119,18 @@ function TwitchPlayer({
   const onReadyRef = useRef(onReady);
   const onStateChangeRef = useRef(onStateChange);
   const onErrorRef = useRef(onError);
+  const qualityModeRef = useRef(qualityMode);
 
   // Keep callback refs current so the player always calls the latest version
   useEffect(() => { onReadyRef.current = onReady; }, [onReady]);
   useEffect(() => { onStateChangeRef.current = onStateChange; }, [onStateChange]);
   useEffect(() => { onErrorRef.current = onError; }, [onError]);
+  useEffect(() => { qualityModeRef.current = qualityMode; }, [qualityMode]);
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    applyTwitchQualityMode(player, qualityMode);
+  }, [qualityMode]);
 
   const channel = extractTwitchChannel(twitchUrl);
 
@@ -94,6 +153,12 @@ function TwitchPlayer({
     if (!channel) return;
 
     let destroyed = false;
+
+    const prioritizeQuality = () => {
+      const player = playerRef.current;
+      if (!player) return;
+      applyTwitchQualityMode(player, qualityModeRef.current);
+    };
 
     async function init() {
       try {
@@ -201,6 +266,7 @@ function TwitchPlayer({
       player.addEventListener(window.Twitch.Player.READY, () => {
         if (destroyed) return;
         stretchEmbedChildren(); // re-apply sizing once iframe is guaranteed present
+        prioritizeQuality();
         try {
           if (!isMainRef.current) {
             player.setMuted(true);
@@ -213,6 +279,7 @@ function TwitchPlayer({
       // Map Twitch events to YouTube-like state values for consistency
       player.addEventListener(window.Twitch.Player.PLAYING, () => {
         if (destroyed) return;
+        prioritizeQuality();
         if (onStateChangeRef.current) onStateChangeRef.current(1); // YT.PlayerState.PLAYING = 1
       });
 

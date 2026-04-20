@@ -11,8 +11,8 @@ function TwitchPreview({ streamUrl }) {
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden bg-gradient-to-br from-[#6c5ce7]/30 via-[#201e2a] to-[#00d296]/10">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.12),transparent_45%)]" />
       <div className="relative z-10 text-center">
-        <div className="mx-auto mb-2 flex h-11 w-11 items-center justify-center rounded-2xl border border-white/15 bg-white/10 text-lg backdrop-blur-md">
-          🟣
+        <div className="mx-auto mb-2 flex h-11 min-w-11 items-center justify-center rounded-2xl border border-white/15 bg-white/10 px-2 text-[9px] font-mono uppercase tracking-[0.16em] backdrop-blur-md">
+          Twitch
         </div>
         <p className="text-[11px] font-mono uppercase tracking-[0.22em] text-white/60">Twitch</p>
         <p className="mt-1 text-sm font-semibold text-white">{channel || 'Live channel'}</p>
@@ -27,6 +27,7 @@ function StreamPreviewCard({
   onClick,
   isHost = false,
   isControlDelegated = false,
+  showSyncStatus = true,
   label = null,
   className = '',
 }) {
@@ -76,6 +77,7 @@ function StreamPreviewCard({
             stream={stream}
             isHost={isHost}
             isControlDelegated={isControlDelegated}
+            showSyncStatus={showSyncStatus}
           />
         </div>
       </div>

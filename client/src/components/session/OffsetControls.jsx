@@ -26,7 +26,7 @@ export default function OffsetControls({ streamId, isAnchor, offset, onStep, onP
     <div className="w-full">
       <div className="flex items-center justify-between mb-0.5 px-0.5">
         <span className={`text-[10px] font-mono ${isAnchor ? 'text-pov-muted/40' : 'text-pov-accent'}`}>
-          {isAnchor ? '⚓ anchor' : fmt(offset)}
+          {isAnchor ? 'anchor' : fmt(offset)}
         </span>
         <div className="flex items-center gap-1">
           {!isAnchor && (
@@ -35,7 +35,7 @@ export default function OffsetControls({ streamId, isAnchor, offset, onStep, onP
               title="Promote to anchor"
               className="text-[8px] font-mono text-pov-muted/50 hover:text-pov-muted border border-pov-border/50 rounded px-1 py-0.5 leading-none transition-colors"
             >
-              ⚓
+              anchor
             </button>
           )}
         </div>

@@ -6,7 +6,7 @@ export default function AnchorDeadBanner({ streams, onPromote, onDismiss }) {
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1">
           <p className="text-sm font-semibold text-pov-danger mb-1">
-            ⚠️ Anchor stream ended
+            Anchor stream ended
           </p>
           <p className="text-xs text-pov-muted mb-3">
             The reference stream is no longer available. Promote a replacement anchor to keep sync running.
@@ -18,7 +18,7 @@ export default function AnchorDeadBanner({ streams, onPromote, onDismiss }) {
                 onClick={() => onPromote(stream.id)}
                 className="text-xs font-mono bg-pov-surface border border-pov-border rounded px-3 py-1.5 text-pov-text hover:border-pov-accent hover:text-pov-accent transition-colors"
               >
-                ⚓ Promote {stream.display_name}
+                Set {stream.display_name} as anchor
               </button>
             ))}
           </div>

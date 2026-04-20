@@ -14,12 +14,13 @@ export default function StatusIndicators({
   isHost = false,
   isControlDelegated = false,
   syncStatus = 'waiting',
+  showSyncStatus = true,
 }) {
   const indicators = [];
 
   // Platform indicator — show Twitch badge for non-YouTube streams
   if (stream.platform === 'twitch') {
-    indicators.push({ key: 'platform', emoji: '🟣', label: 'Twitch' });
+    indicators.push({ key: 'platform', emoji: 'Twitch', label: 'Twitch' });
   }
 
   // Role indicators
@@ -34,7 +35,7 @@ export default function StatusIndicators({
   }
 
   // Sync status — only show if not anchor (anchor is always reference)
-  if (!stream.is_anchor && SYNC_INDICATORS[syncStatus]) {
+  if (showSyncStatus && !stream.is_anchor && SYNC_INDICATORS[syncStatus]) {
     indicators.push({ key: 'sync', ...SYNC_INDICATORS[syncStatus] });
   }
 
@@ -46,7 +47,7 @@ export default function StatusIndicators({
         <span
           key={ind.key}
           title={ind.label}
-          className="text-xs leading-none cursor-default"
+          className="text-[10px] font-mono leading-none cursor-default"
         >
           {ind.emoji}
         </span>

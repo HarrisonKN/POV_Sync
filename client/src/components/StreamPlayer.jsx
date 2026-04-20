@@ -12,6 +12,7 @@ import { detectPlatform } from '../../../shared/helpers.js';
  *  - platform: optional explicit platform ('youtube' | 'twitch')
  *              If omitted, auto-detected from streamUrl
  *  - isMain: whether this player is the main stage (controls audio)
+ *  - qualityMode: playback quality preference ('highest' | 'auto')
  *  - onReady: callback(playerAPI)
  *  - onStateChange: callback(state)
  *  - className: wrapper classes
@@ -20,6 +21,7 @@ function StreamPlayer({
   streamUrl,
   platform: explicitPlatform,
   isMain = false,
+  qualityMode = 'highest',
   onReady,
   onStateChange,
   onError,
@@ -32,6 +34,7 @@ function StreamPlayer({
       <TwitchPlayer
         twitchUrl={streamUrl}
         isMain={isMain}
+        qualityMode={qualityMode}
         onReady={onReady}
         onStateChange={onStateChange}
         onError={onError}
@@ -45,6 +48,7 @@ function StreamPlayer({
     <YouTubePlayer
       youtubeUrl={streamUrl}
       isMain={isMain}
+      qualityMode={qualityMode}
       onReady={onReady}
       onStateChange={onStateChange}
       onError={onError}

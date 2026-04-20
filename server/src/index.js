@@ -5,10 +5,12 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { createServer } from 'http';
 import sessionRoutes from './routes/sessions.js';
+import feedbackRoutes from './routes/feedback.js';
 import { setupWebSocket } from './websocket/index.js';
 import { stopAllSessions } from './services/syncManager.js';
 import { loadServerEnv } from './lib/loadEnv.js';
 import { supabaseAdmin } from './lib/supabase.js';
+import { createExpressRateLimit } from './lib/rateLimit.js';
 
 loadServerEnv();
 
@@ -47,38 +49,13 @@ function isAllowedOrigin(origin) {
   return false;
 }
 
-const rateLimitWindowMs = 60_000;
-const rateLimitMax = Number(process.env.API_RATE_LIMIT_MAX || 120);
-const requestCounts = new Map();
-
-function apiRateLimit(req, res, next) {
-  const key = req.ip || 'unknown';
-  const now = Date.now();
-  const bucket = requestCounts.get(key);
-
-  if (!bucket || bucket.resetAt <= now) {
-    requestCounts.set(key, { count: 1, resetAt: now + rateLimitWindowMs });
-    return next();
-  }
-
-  bucket.count += 1;
-  if (bucket.count > rateLimitMax) {
-    const retryAfterSeconds = Math.ceil((bucket.resetAt - now) / 1000);
-    res.setHeader('Retry-After', String(retryAfterSeconds));
-    return res.status(429).json({ error: 'Too many requests' });
-  }
-
-  return next();
-}
-
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, bucket] of requestCounts.entries()) {
-    if (bucket.resetAt <= now) {
-      requestCounts.delete(key);
-    }
-  }
-}, rateLimitWindowMs).unref();
+const apiRateLimit = createExpressRateLimit({
+  windowMs: 60_000,
+  max: Number(process.env.API_RATE_LIMIT_MAX || 120),
+  keyPrefix: 'api-global',
+  keyGenerator: (req) => req.ip || 'unknown',
+  message: 'Too many requests',
+});
 
 // Middleware
 app.use((req, res, next) => {
@@ -122,6 +99,7 @@ app.get('/api/health', (req, res) => {
 // API routes
 app.use('/api', apiRateLimit);
 app.use('/api/sessions', sessionRoutes);
+app.use('/api/feedback', feedbackRoutes);
 
 // Catch malformed JSON bodies — return consistent JSON error shape
 app.use((err, req, res, next) => {

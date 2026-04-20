@@ -8,7 +8,7 @@ const TOC = [
   { id: 'golive',    label: 'Go Live' },
   { id: 'create',    label: 'Create a Session' },
   { id: 'join',      label: 'Join a Session' },
-  { id: 'syncing',   label: 'How Sync Works' },
+  { id: 'syncing',   label: 'Room Sync' },
   { id: 'controls',  label: 'Controls & Offsets' },
   { id: 'spectator', label: 'Spectator View' },
   { id: 'vod',       label: 'VOD Replay' },
@@ -20,27 +20,26 @@ export default function Setup() {
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
       <h1 className="text-2xl sm:text-3xl font-bold font-mono mb-2">Setup Guide</h1>
       <p className="text-pov-muted text-sm mb-8 sm:mb-10 max-w-lg">
-        A complete, start-to-finish walkthrough — from installing OBS to
-        streaming in perfect sync with your squad.
+        A simple guide to get from OBS setup to a synced stream with your squad.
       </p>
 
       <div className="grid gap-3 sm:grid-cols-3 mb-8">
-        <OverviewCard title="OBS" value="1080p60" detail="CBR, 2s keyframes, NVENC preferred" />
-        <OverviewCard title="YouTube / Twitch" value="Live Ready" detail="YouTube: Ultra Low Latency · Twitch: live channel embed" />
-        <OverviewCard title="POV Sync" value="Rejoin anytime" detail="Live session resume works across pages" />
+        <OverviewCard title="OBS" value="1080p60" detail="Use CBR, 2s keyframes, and NVENC if available" />
+        <OverviewCard title="YouTube / Twitch" value="Live Ready" detail="Use Ultra Low Latency on YouTube, then copy your live stream URL" />
+        <OverviewCard title="POV Sync" value="Invite Link" detail="Share one invite link, or let people join with a code or participant link" />
       </div>
 
       {/* ── Quick Start ────────────────────────────────────── */}
       <div className="bg-pov-accent/5 border border-pov-accent/20 rounded-xl p-4 sm:p-5 mb-8">
-        <p className="text-xs font-mono text-pov-accent uppercase tracking-wider mb-3">⚡ Quick Start — the short version</p>
+        <p className="text-xs font-mono text-pov-accent uppercase tracking-wider mb-3">Quick Start</p>
         <ol className="space-y-1.5 text-sm text-pov-muted">
-          <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">1.</span> Download OBS, connect it to YouTube or Twitch, and go live.</li>
-          <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">2.</span> Copy your stream URL (YouTube looks like <code className="text-pov-accent">youtube.com/watch?v=...</code>; Twitch looks like <code className="text-pov-accent">twitch.tv/yourchannel</code>).</li>
-          <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">3.</span> Host: create a session here and paste your URL. Share the participant link with your squad.</li>
-          <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">4.</span> Squad: open the link, sign in, and paste your own stream URL.</li>
-          <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">5.</span> Everyone’s POVs stay aligned automatically.</li>
+          <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">1.</span> Set up OBS, connect it to YouTube or Twitch, and start your stream.</li>
+          <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">2.</span> Copy your stream URL. YouTube looks like <code className="text-pov-accent">youtube.com/watch?v=...</code>; Twitch looks like <code className="text-pov-accent">twitch.tv/yourchannel</code>.</li>
+          <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">3.</span> If you are the host, create a session, enter your stream URL, and copy the invite link from the room header.</li>
+          <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">4.</span> Everyone else opens the invite link and chooses whether to watch or join as a participant.</li>
+          <li className="flex gap-2"><span className="text-pov-accent font-bold flex-shrink-0">5.</span> POV Sync lines the streams up for you.</li>
         </ol>
-        <p className="text-xs text-pov-muted/60 mt-3">Read the full guide below if you get stuck or want to understand the details.</p>
+        <p className="text-xs text-pov-muted/60 mt-3">Need more detail? The full guide is below.</p>
       </div>
 
       {/* ── Table of contents ──────────────────────────────── */}
@@ -69,7 +68,7 @@ export default function Setup() {
       <Section id="obs" step="1" title="OBS Studio Setup">
         <p className="mb-4">
           <ExternalLink href="https://obsproject.com">OBS Studio</ExternalLink> is
-          the recommended (free) broadcasting software. If you don't have it yet,
+          our recommended free streaming app. If you do not have it yet,
           download and install it first.
         </p>
 
@@ -92,14 +91,14 @@ export default function Setup() {
         />
 
         <Note>
-          Not sure which encoder to pick? NVENC = NVIDIA graphics card, AMD HW = AMD graphics
-          card, x264 = everything else (uses your CPU). NVENC and AMD are preferred as they
-          don't impact your game's framerate.
+          Not sure which encoder to use? Pick NVENC for NVIDIA, AMD HW for AMD,
+          and x264 if you do not have either. NVENC and AMD HW are usually best
+          because they put less load on your CPU.
         </Note>
         <Note>
-          12000 Kbps requires roughly <strong>15 Mbps upload speed</strong>. Run a speed test
-          at <ExternalLink href="https://fast.com">fast.com</ExternalLink> first. If your
-          upload is under 15 Mbps, drop to 6000 Kbps (still looks great at 1080p60).
+          12000 Kbps needs about <strong>15 Mbps upload speed</strong>. Test your upload at
+          <ExternalLink href="https://fast.com">fast.com</ExternalLink>. If you are below
+          15 Mbps, try 6000 Kbps instead.
         </Note>
 
         <SubHeading>Video Settings</SubHeading>
@@ -115,8 +114,8 @@ export default function Setup() {
           ]}
         />
         <Note>
-          If your PC struggles to maintain 60fps in OBS while gaming, switch to 30fps
-          rather than lowering resolution — 1080p30 looks better than 720p60 for most games.
+          If OBS struggles to hold 60fps while you play, switch to 30fps before lowering
+          the resolution. For most games, 1080p30 still looks good.
         </Note>
 
         <SubHeading>Audio Settings</SubHeading>
@@ -133,16 +132,16 @@ export default function Setup() {
         />
         <Note>
           Also go to <Kbd>Settings → Output → Audio</Kbd> and set <strong>Audio
-          Bitrate</strong> to <strong>160 Kbps</strong> — YouTube recommends 128 Kbps
-          minimum; 160 gives a bit of headroom for voice clarity.
+          Bitrate</strong> to <strong>160 Kbps</strong>. YouTube recommends at least
+          128 Kbps, and 160 Kbps gives your voice a little more room to sound clear.
         </Note>
 
         <SubHeading>Adding Scenes & Sources</SubHeading>
         <Steps>
           <Step n="1">In the <strong>Scenes</strong> box, click <strong>+</strong> to add a new scene (e.g. "Gaming").</Step>
-          <Step n="2">In <strong>Sources</strong>, click <strong>+</strong> → <strong>Game Capture</strong> for your game.</Step>
-          <Step n="3">Choose <strong>Capture specific window</strong> and pick your game from the dropdown.</Step>
-          <Step n="4">Add <strong>Audio Output Capture</strong> (game sound) and <strong>Audio Input Capture</strong> (your mic) if they're not already showing in the Audio Mixer.</Step>
+          <Step n="2">In <strong>Sources</strong>, click <strong>+</strong> and add <strong>Game Capture</strong> for your game, or <strong>Display Capture</strong> if you want to capture your whole screen.</Step>
+          <Step n="3">If you use <strong>Game Capture</strong>, choose <strong>Capture specific window</strong> and pick your game from the dropdown.</Step>
+          <Step n="4">Add <strong>Audio Output Capture</strong> for game sound and <strong>Audio Input Capture</strong> for your mic if they are not already in the Audio Mixer.</Step>
           <Step n="5">Optional: add a <strong>Webcam</strong> (Video Capture Device) and resize/position it.</Step>
         </Steps>
       </Section>
@@ -153,7 +152,7 @@ export default function Setup() {
       <Section id="youtube" step="2" title="YouTube Live Setup">
         <SubHeading>Prerequisites</SubHeading>
         <Steps>
-          <Step n="1">You need a <ExternalLink href="https://www.youtube.com">YouTube</ExternalLink> account with <strong>live streaming enabled</strong>. If it's your first time, YouTube may require up to 24 hours to activate it.</Step>
+          <Step n="1">You need a <ExternalLink href="https://www.youtube.com">YouTube</ExternalLink> account with <strong>live streaming enabled</strong>. If this is your first stream, activation can take up to 24 hours.</Step>
           <Step n="2">Go to <ExternalLink href="https://studio.youtube.com">YouTube Studio</ExternalLink> → click <strong>Create</strong> (camera icon) → <strong>Go live</strong>.</Step>
           <Step n="3">If prompted, verify your phone number to unlock live streaming.</Step>
         </Steps>
@@ -166,23 +165,21 @@ export default function Setup() {
 
         <SettingsTable
           rows={[
-            ['Title', 'Whatever you like — your squad will see this'],
-            ['Visibility', 'Public or Unlisted (NOT Private — POV Sync can\'t access private streams)'],
-            ['Latency', 'Ultra low-latency ⭐ (critical for sync accuracy — see below)'],
+            ['Title', 'Anything you like — your squad will see it'],
+            ['Visibility', 'Public or Unlisted (not Private — POV Sync cannot read private streams)'],
+            ['Latency', 'Ultra low-latency (best for sync)'],
             ['Enable DVR', 'Off (automatically disabled with ultra low-latency)'],
             ['360° video', 'Off'],
           ]}
         />
 
-        <Callout emoji="⚡" title="Why Ultra Low Latency?">
+        <Callout emoji="Note" title="Why Ultra Low Latency?">
           <p>
-            YouTube normally has a 20–30 second delay. Ultra low-latency cuts that to about
-            2–5 seconds, which means everyone watching stays much closer to real time —
-            and POV Sync can keep all your streams better aligned.
+            YouTube usually adds a big delay. Ultra low-latency cuts that down to roughly
+            2–5 seconds, so everyone stays much closer to live and the room stays easier to sync.
           </p>
           <p className="mt-2">
-            The only downside is you can't rewind the stream while it's live. Stream quality
-            is <strong>not</strong> affected.
+            The tradeoff is simple: viewers cannot rewind while the stream is live. Stream quality stays the same.
           </p>
         </Callout>
 
@@ -190,7 +187,7 @@ export default function Setup() {
         <Steps>
           <Step n="1">In YouTube Studio's Live Control Room, go to the <strong>Stream</strong> tab.</Step>
           <Step n="2">You'll see a <strong>Stream key</strong> field — click <strong>Copy</strong>.</Step>
-          <Step n="3">Also copy the <strong>Stream URL</strong> (usually <code className="text-pov-accent">rtmp://a.rtmp.youtube.com/live2</code>).</Step>
+          <Step n="3">Copy the <strong>Stream URL</strong> too if you want it for OBS. It usually looks like <code className="text-pov-accent">rtmp://a.rtmp.youtube.com/live2</code>.</Step>
         </Steps>
 
         <SubHeading>Connecting OBS to YouTube</SubHeading>
@@ -201,9 +198,8 @@ export default function Setup() {
           <Step n="4">Click <strong>Apply</strong>, then <strong>OK</strong>.</Step>
         </Steps>
         <Tip>
-          Alternatively, you can use <strong>Connect Account</strong> in OBS to link your
-          Google account directly — this lets you manage the stream from OBS without
-          copy-pasting keys.
+          You can also use <strong>Connect Account</strong> in OBS to link your Google account directly.
+          That saves you from copying and pasting stream keys.
         </Tip>
 
         <div id="twitch" className="mt-8 pt-6 border-t border-pov-border/60 scroll-mt-20">
@@ -223,7 +219,7 @@ export default function Setup() {
           </Steps>
 
           <Note>
-            Twitch embeds work best when the channel is already live. POV Sync will show the stream directly in the room once you paste the channel URL.
+            Twitch works best once the channel is already live. Paste your channel URL and POV Sync will load it in the room.
           </Note>
         </div>
       </Section>
@@ -235,7 +231,7 @@ export default function Setup() {
         <Steps>
           <Step n="1">Make sure your game or content is running and visible in OBS's preview.</Step>
           <Step n="2">In OBS, click <strong>Start Streaming</strong>.</Step>
-          <Step n="3">If you're on YouTube, switch to YouTube Studio — after a few seconds you'll see a <strong>preview</strong> of your stream. Click <strong>Go Live</strong> in the top-right to make it public.</Step>
+          <Step n="3">If you are using YouTube, open YouTube Studio. Once you see the <strong>preview</strong>, click <strong>Go Live</strong> in the top right.</Step>
           <Step n="4">If you're on Twitch, confirm your channel goes live in the Twitch dashboard.</Step>
           <Step n="5">Copy your stream URL — it looks like one of these:</Step>
         </Steps>
@@ -243,7 +239,7 @@ export default function Setup() {
           https://www.youtube.com/watch?v=YOUR_STREAM_ID  or  https://www.twitch.tv/YOUR_CHANNEL
         </code>
         <p>
-          You'll paste this URL into POV Sync when creating or joining a session.
+          You will paste this URL into POV Sync when you create or join a session.
         </p>
 
         <SubHeading>Quick Checklist Before Going Live</SubHeading>
@@ -264,35 +260,39 @@ export default function Setup() {
           ═══════════════════════════════════════════════════════ */}
       <Section id="create" step="4" title="Create a Session (Host)">
         <p className="mb-4">
-          The host creates the session and becomes the <strong>anchor stream</strong> — the
-          reference point all other streams sync against.
+          The host creates the session and becomes the <strong>anchor stream</strong>.
+          Everyone else syncs to that stream.
         </p>
         <Steps>
           <Step n="1">Sign in to POV Sync with Google.</Step>
-          <Step n="2">On the <Link to="/" className="text-pov-accent hover:underline">home page</Link>, click <strong>Create Session</strong>.</Step>
-          <Step n="3">Paste your YouTube or Twitch stream URL and click <strong>Go Live</strong>.</Step>
-          <Step n="4">You'll land in the Viewer. Copy the two links:</Step>
+          <Step n="2">On the <Link to="/" className="text-pov-accent hover:underline">home page</Link>, open the <strong>Create Session</strong> panel.</Step>
+          <Step n="3">Paste your YouTube or Twitch stream URL, add an optional session title, and click <strong>Go Live</strong>.</Step>
+          <Step n="4">Once you enter the room, expand the header and click <strong>Show invite link</strong>.</Step>
+          <Step n="5">Copy the invite link and share it with your squad.</Step>
         </Steps>
         <div className="space-y-2 my-3">
           <div className="bg-pov-surface border border-pov-border rounded-lg px-4 py-3 flex items-start gap-3">
-            <span className="text-base flex-shrink-0">🔗</span>
+            <span className="text-xs font-mono text-pov-accent flex-shrink-0">Link</span>
             <div>
-              <p className="text-pov-text font-medium text-sm">Participant Link</p>
+              <p className="text-pov-text font-medium text-sm">Invite Link</p>
               <p className="text-xs text-pov-muted mt-0.5">
-                Send to your squad — they'll sign in and submit their own stream URL.
+                This opens the room chooser at <code className="text-pov-accent">/room/...</code>, where people can watch or join as a participant.
               </p>
             </div>
           </div>
           <div className="bg-pov-surface border border-pov-border rounded-lg px-4 py-3 flex items-start gap-3">
-            <span className="text-base flex-shrink-0">👁</span>
+            <span className="text-xs font-mono text-pov-accent flex-shrink-0">Join</span>
             <div>
-              <p className="text-pov-text font-medium text-sm">Spectator Link</p>
+              <p className="text-pov-text font-medium text-sm">Direct Join Options</p>
               <p className="text-xs text-pov-muted mt-0.5">
-                Share with viewers — no account needed, read-only multi-POV experience.
+                Participants can also paste a join code or a direct participant link into the join page if you send one in chat or Discord.
               </p>
             </div>
           </div>
         </div>
+        <Note>
+          The main flow is now the invite link. It is the easiest option because people can choose <strong>Watch</strong> or <strong>Join as Participant</strong> from the same page.
+        </Note>
       </Section>
 
       {/* ═══════════════════════════════════════════════════════
@@ -300,36 +300,32 @@ export default function Setup() {
           ═══════════════════════════════════════════════════════ */}
       <Section id="join" step="5" title="Join a Session">
         <Steps>
-          <Step n="1">Open the participant link your host shared, or go to the home page and enter the join code.</Step>
-          <Step n="2">Sign in with Google if you aren't already.</Step>
-          <Step n="3">Make sure you're <strong>already live on YouTube or Twitch</strong> before continuing.</Step>
-          <Step n="4">Enter your display name and paste your stream URL.</Step>
-          <Step n="5">Click <strong>Join Session</strong> — your stream appears in the filmstrip within seconds.</Step>
+          <Step n="1">Open the host's invite link and choose <strong>Join as Participant</strong>, or paste a join code / participant link into the join page.</Step>
+          <Step n="2">Sign in with Google if needed. POV Sync will bring you back to the right room after sign-in.</Step>
+          <Step n="3">Make sure you are <strong>already live on YouTube or Twitch</strong> before you continue.</Step>
+          <Step n="4">Enter your display name if needed, then paste your stream URL.</Step>
+          <Step n="5">Click <strong>Join Session</strong>. Your POV should appear in the room within a few seconds.</Step>
         </Steps>
         <Note>
-          Up to 5 participants can join a single session. If you navigate away,
-          you'll see a green <strong>"Return to Session"</strong> pill in the
-          navbar that takes you right back.
+          Up to 5 participants can join one live room. If you leave the page, use the green <strong>"Return to Session"</strong> pill or the session resume card to jump back in.
         </Note>
       </Section>
 
-      {/* ═══════════════════════════════════════════════════════
-          SECTION 6 — HOW SYNC WORKS
+        {/* ═══════════════════════════════════════════════════════
+          SECTION 6 — ROOM SYNC
           ═══════════════════════════════════════════════════════ */}
-      <Section id="syncing" step="6" title="How Sync Works">
+      <Section id="syncing" step="6" title="Room Sync">
         <p className="mb-4">
-          You don't need to understand this to use POV Sync — but here's the plain-English version
-          if you're curious.
+          You do not need the technical details to use POV Sync. This is the part that actually matters in practice.
         </p>
         <Steps>
-          <Step n="1">When your stream loads, POV Sync quietly notes the stream type and starts the matching sync logic.</Step>
-          <Step n="2">YouTube streams use the exact start time from the player; Twitch streams use the live embed and shared room timing.</Step>
-          <Step n="3">It works out how many seconds ahead or behind each stream is compared to the anchor (the host's stream).</Step>
-          <Step n="4">It nudges each player forward or backward so they all line up. This repeats every few seconds to correct any drift.</Step>
+          <Step n="1">The host's POV starts as the room anchor, and the rest of the room lines up to it.</Step>
+          <Step n="2">If the host gives control to someone else, that person can run the same room sync actions.</Step>
+          <Step n="3">Use <strong>Go Live</strong> to snap the room back to the live edge, or <strong>Re-sync</strong> if the room just needs another alignment pass.</Step>
+          <Step n="4">For YouTube POVs, POV Sync can confirm and save UTC start times. That makes VOD handoff more reliable when the room ends.</Step>
         </Steps>
         <Note>
-          Give it about 15–30 seconds after everyone joins before judging the sync — each player
-          needs a moment to load before the system can calculate the offsets.
+          Give the room 15–30 seconds after everyone joins before judging the sync. If one POV still looks off, use the per-POV offset buttons under that stream.
         </Note>
       </Section>
 
@@ -337,45 +333,71 @@ export default function Setup() {
           SECTION 7 — CONTROLS & OFFSETS
           ═══════════════════════════════════════════════════════ */}
       <Section id="controls" step="7" title="Controls & Offsets">
-        <SubHeading>Master Controls (Host)</SubHeading>
+        <SubHeading>Room Bar</SubHeading>
         <p className="mb-3">
-          The host (or a delegated participant) has access to master controls:
+          The room toolbar is the main control area. It includes view mode, playback, sync, and quality controls.
         </p>
         <SettingsTable
           rows={[
-            ['▶ Play All', 'Resume all streams simultaneously'],
-            ['⏸ Pause All', 'Pause all streams simultaneously'],
-            ['📡 Go Live', 'Snap all streams to their live edge'],
-            ['🔁 Re-sync', 'Re-align all streams to the anchor'],
+            ['Stage / Wall', 'Switch between a main-stage layout and a wall of POVs'],
+            ['Play All', 'Play the current room view'],
+            ['Pause All', 'Pause the current room view'],
+            ['Go Live', 'Jump back to the live edge'],
+            ['Re-sync', 'Run another sync pass for the room'],
+            ['Quality', 'Choose Highest, High, Low, or Auto quality'],
+          ]}
+        />
+
+        <SubHeading>View & Layout</SubHeading>
+        <p className="mb-3">
+          On desktop, you can resize the main view and switch the POV strip between a vertical sidebar and a horizontal strip. On mobile, the room is simplified into a more touch-friendly layout.
+        </p>
+
+        <SubHeading>Main POV Nudge</SubHeading>
+        <p className="mb-3">
+          The nudge controls in the room act on the POV you are currently focused on. They are useful when you want to fine-tune what you are watching locally.
+        </p>
+        <SettingsTable
+          rows={[
+            ['-5s / -1s / +1s / +5s', 'Quick local nudges for the POV you have selected'],
+            ['-1f / +1f', 'Small frame-level nudges for precise adjustment'],
           ]}
         />
 
         <SubHeading>Per-Stream Offset Controls</SubHeading>
         <p className="mb-3">
-          If a stream still looks off after auto-sync, you can nudge it manually using the
-          buttons below each thumbnail. Start with bigger steps and work down to fine-tune:
+          Hosts and delegated controllers also get offset controls below each POV tile. These are the room-level sync controls for individual streams.
         </p>
         <SettingsTable
           rows={[
-            ['±30s', 'Big jump — useful if a stream is very far out'],
-            ['±5s', 'Medium nudge'],
-            ['±1s', 'Small nudge — use this for final tuning'],
-            ['±1 frame', 'Tiny precise tweak — only needed if you\'re very picky'],
+            ['-5s / -1s', 'Move that stream back'],
+            ['+1s / +5s', 'Move that stream forward'],
+            ['-1f / +1f', 'Frame-level adjustment for that stream'],
+            ['Anchor', 'Promote that POV to be the new anchor'],
           ]}
         />
 
         <SubHeading>Anchor Stream</SubHeading>
         <p className="mb-2">
-          The anchor (⚓) is the reference — its offset is always 0. All other
-          streams are synced relative to it. The host can promote any stream to
-          anchor using the ⚓ button below its thumbnail.
+          The anchor is the reference stream, so its offset always stays at 0.
+          All other streams sync to it. The host or current controller can make any stream the anchor with the anchor button.
         </p>
 
-        <SubHeading>Control Delegation</SubHeading>
+        <SubHeading>Host-Only Tools</SubHeading>
+        <p className="mb-3">
+          Hosts have a few extra tools that do not appear for normal participants.
+        </p>
+        <SettingsTable
+          rows={[
+            ['Add POV', 'Add another YouTube or Twitch stream directly from the room'],
+            ['Control Delegation', 'Temporarily give full room controls to one participant'],
+            ['Participants', 'See who is in the room and remove someone if needed'],
+            ['Sync Readiness', 'Check which YouTube POVs have confirmed UTC start times for VOD handoff'],
+          ]}
+        />
         <p>
-          The host can temporarily hand controls to another participant via the
-          <strong> Control Delegation</strong> panel. The delegate gets full access
-          to master controls and offset adjustments. The host can reclaim at any time.
+          The host can temporarily hand controls to another participant with the
+          <strong> Control Delegation</strong> panel. That person gets the same room controls until the host takes them back.
         </p>
       </Section>
 
@@ -384,10 +406,8 @@ export default function Setup() {
           ═══════════════════════════════════════════════════════ */}
       <Section id="spectator" step="8" title="Spectators">
         <p>
-          Share the <strong>Spectator Link</strong> with anyone who just wants to
-          watch. No account required. Spectators see the same multi-POV layout
-          with filmstrip switching, and new streams appear in real time as
-          participants join. Spectators can't adjust offsets or controls.
+          The easiest way to bring in viewers is the shared <strong>invite link</strong>. From there, they can choose <strong>Watch</strong> and enter the room without an account.
+          Spectators can switch POVs and use the room layout locally, but they cannot change room sync, offsets, or host controls.
         </p>
       </Section>
 
@@ -396,16 +416,11 @@ export default function Setup() {
           ═══════════════════════════════════════════════════════ */}
       <Section id="vod" step="9" title="VODs">
         <p className="mb-3">
-          When the host ends a session, all streams and their computed offsets
-          are saved permanently. Anyone with the session link can rewatch later —
-          all POVs, fully synced, starting from the beginning.
+          When the host ends a session, the streams and offsets are saved.
+          Anyone with the session link can come back later and watch from the start.
         </p>
         <Note>
-          Sync offsets are applied automatically when you watch a VOD — you don't need to
-          do anything. You can still switch between POVs freely. YouTube automatically
-          saves streams under 12 hours, so as long as your session isn't a marathon you're
-          covered. Twitch live embeds are supported here for live viewing, but VOD replay
-          behavior depends on the platform's own archive settings.
+          Sync offsets are applied automatically when you watch a VOD, so there is nothing extra to set up. For the best handoff, let the host check the <strong>Sync Readiness</strong> panel before ending the room. YouTube usually saves streams under 12 hours. Twitch replay support depends on that channel's archive settings.
         </Note>
       </Section>
 
@@ -425,10 +440,8 @@ export default function Setup() {
         <TroubleshootItem
           q="Streams look out of sync"
           a={<>
-            Give it 15–30 seconds — the sync system needs each player to accumulate at least 10
-            seconds of playback before computing offsets. If sync is still off, click{' '}
-            <strong>🔁 Re-sync</strong> or <strong>📡 Go Live</strong> in the master controls.
-            You can also fine-tune with the per-stream offset buttons.
+            Give it 15–30 seconds so the room has time to settle. If things still look off, use{' '}
+            <strong>Re-sync</strong> or <strong>Go Live</strong> in the room bar. Hosts and delegated controllers can also fine-tune a specific POV with the offset buttons under that stream.
           </>}
         />
         <TroubleshootItem
@@ -443,7 +456,7 @@ export default function Setup() {
           q="My platform says 'Live streaming not enabled'"
           a={<>
             First-time streamers need to enable live streaming in their platform dashboard. YouTube can take up to
-            24 hours to verify your account. Twitch may require additional verification depending on your account age.
+            24 hours to verify your account. Twitch may also ask for extra verification.
           </>}
         />
         <TroubleshootItem
@@ -475,8 +488,8 @@ export default function Setup() {
         <TroubleshootItem
           q="Can I use Streamlabs, XSplit, or another app instead of OBS?"
           a={<>
-            Yes! POV Sync only needs a YouTube or Twitch stream URL. Any software that can stream to
-            either platform works — OBS is just what we recommend because it's free, open source, and widely used.
+            Yes. POV Sync only needs a YouTube or Twitch stream URL. Any app that can stream to
+            either platform should work. We recommend OBS because it is free and widely used.
           </>}
         />
       </Section>
@@ -553,7 +566,7 @@ function Note({ children, type }) {
         ? 'bg-yellow-500/10 border border-yellow-500/30 text-yellow-300/80'
         : 'bg-pov-surface border border-pov-border text-pov-muted/80'
     }`}>
-      <span className="flex-shrink-0">{isWarning ? '⚠️' : '💡'}</span>
+      <span className="flex-shrink-0 font-mono">{isWarning ? 'Warning' : 'Note'}</span>
       <span>{children}</span>
     </div>
   );
@@ -562,7 +575,7 @@ function Note({ children, type }) {
 function Tip({ children }) {
   return (
     <div className="bg-pov-accent/5 border border-pov-accent/20 rounded-lg px-4 py-3 text-xs text-pov-muted flex gap-2 mt-3">
-      <span className="flex-shrink-0">💎</span>
+      <span className="flex-shrink-0 font-mono">Tip</span>
       <span>{children}</span>
     </div>
   );
@@ -572,7 +585,7 @@ function Callout({ emoji, title, children }) {
   return (
     <div className="bg-pov-surface border border-pov-border rounded-xl px-4 sm:px-5 py-4 mt-4">
       <p className="text-sm font-semibold text-pov-text flex items-center gap-2 mb-2">
-        <span>{emoji}</span> {title}
+        <span className="font-mono text-sm">{emoji}</span> {title}
       </p>
       <div className="text-xs text-pov-muted leading-relaxed">
         {children}
@@ -597,7 +610,7 @@ function ExternalLink({ href, children }) {
       rel="noopener noreferrer"
       className="text-pov-accent hover:underline"
     >
-      {children} ↗
+      {children}
     </a>
   );
 }
@@ -607,7 +620,7 @@ function CheckList({ items }) {
     <ul className="space-y-1.5 mt-3">
       {items.map((item, i) => (
         <li key={i} className="flex items-start gap-2 text-xs text-pov-muted">
-          <span className="text-pov-success mt-0.5 flex-shrink-0">☐</span>
+          <span className="text-pov-success mt-0.5 flex-shrink-0">-</span>
           <span>{item}</span>
         </li>
       ))}

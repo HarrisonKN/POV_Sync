@@ -3,13 +3,15 @@ import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../hooks/useTheme';
 import { useActiveSession } from '../hooks/useActiveSession';
+import FeedbackModal from './FeedbackModal';
 
 export default function Navbar() {
-  const { user, profile, loading, signInWithGoogle, signOut } = useAuth();
+  const { user, profile, loading, signInWithGoogle, signOut, getAccessToken } = useAuth();
   const { isDark, toggle } = useTheme();
   const { activeSession } = useActiveSession();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const menuRef = useRef(null);
 
   const onSessionPage  = location.pathname.startsWith('/session/');
@@ -69,17 +71,13 @@ export default function Navbar() {
           <Link
             to="/setup"
             className={[
-              'relative text-xs transition-colors hidden sm:inline flex-shrink-0 py-1',
+              'hidden sm:inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-all flex-shrink-0',
               onSetupPage
-                ? 'text-pov-accent font-medium'
-                : 'text-pov-muted hover:text-pov-text',
+                ? 'border-pov-accent/40 bg-pov-accent/12 text-pov-accent shadow-sm shadow-pov-accent/10'
+                : 'border-pov-accent/25 bg-pov-accent/8 text-pov-text hover:border-pov-accent/45 hover:bg-pov-accent/12',
             ].join(' ')}
           >
-            Setup Guide
-            {/* Active underline */}
-            {onSetupPage && (
-              <span className="absolute -bottom-[1px] inset-x-0 h-0.5 rounded-full bg-pov-accent" />
-            )}
+            <span>Setup Guide</span>
           </Link>
         </div>
 
@@ -87,7 +85,30 @@ export default function Navbar() {
         <div className="flex items-center gap-1 flex-shrink-0">
 
           {/* ── Utility group: theme toggle ───────────────────── */}
-          <div className="flex items-center">
+          <div className="flex items-center gap-1.5">
+            <Link
+              to="/setup"
+              className={[
+                'inline-flex sm:hidden items-center justify-center rounded-lg border px-2.5 py-2 text-xs transition-colors',
+                onSetupPage
+                  ? 'border-pov-accent/40 bg-pov-accent/12 text-pov-accent'
+                  : 'border-pov-border bg-pov-surface/70 text-pov-muted hover:text-pov-text hover:bg-pov-surface',
+              ].join(' ')}
+              aria-label="Open setup guide"
+              title="Setup Guide"
+            >
+              Guide
+            </Link>
+            <button
+              type="button"
+              onClick={() => setFeedbackOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-pov-border bg-pov-surface/70 px-2.5 py-2 text-xs font-medium text-pov-muted transition-colors hover:bg-pov-surface hover:text-pov-text"
+              aria-label="Send feedback"
+              title="Send feedback"
+            >
+              <span className="hidden md:inline">Feedback</span>
+              <span className="md:hidden">FB</span>
+            </button>
             <button
               onClick={toggle}
               aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
@@ -194,6 +215,15 @@ export default function Navbar() {
                       }
                       label="Setup Guide"
                     />
+                    <button
+                      onClick={() => { setMenuOpen(false); setFeedbackOpen(true); }}
+                      className="w-full flex items-center gap-3 px-4 py-2 text-sm text-pov-muted hover:text-pov-text hover:bg-pov-surface/60 transition-colors text-left"
+                    >
+                      <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3h5.25m-8.25 8.117V6.75A2.25 2.25 0 016.75 4.5h10.5a2.25 2.25 0 012.25 2.25v7.5A2.25 2.25 0 0117.25 16.5H9l-4.5 2.867z" />
+                      </svg>
+                      Send Feedback
+                    </button>
                   </div>
 
                   {/* Divider + sign out */}
@@ -222,6 +252,15 @@ export default function Navbar() {
         </div>
 
       </div>
+
+      <FeedbackModal
+        open={feedbackOpen}
+        onClose={() => setFeedbackOpen(false)}
+        user={user}
+        profile={profile}
+        pagePath={location.pathname}
+        getAccessToken={getAccessToken}
+      />
     </nav>
   );
 }

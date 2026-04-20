@@ -1,12 +1,47 @@
 import { Router } from 'express';
 import { supabaseAdmin } from '../lib/supabase.js';
 import { requireAuth } from '../lib/supabaseAuth.js';
+import { createExpressRateLimit } from '../lib/rateLimit.js';
 import { generateLinkCode, detectPlatform } from '../../../shared/helpers.js';
 import * as syncManager from '../services/syncManager.js';
 import { broadcastToSession, setControlDelegation } from '../websocket/index.js';
 import { fetchActualStartTime } from '../lib/youtubeApi.js';
 
 const router = Router();
+
+const userActionKey = (req) => req.supabaseUser?.id || req.ip || 'unknown';
+
+const createSessionRateLimit = createExpressRateLimit({
+  windowMs: 10 * 60_000,
+  max: Number(process.env.SESSION_CREATE_RATE_LIMIT_MAX || 6),
+  keyPrefix: 'session-create',
+  keyGenerator: userActionKey,
+  message: 'Too many session creation attempts',
+});
+
+const streamJoinRateLimit = createExpressRateLimit({
+  windowMs: 60_000,
+  max: Number(process.env.STREAM_JOIN_RATE_LIMIT_MAX || 12),
+  keyPrefix: 'session-stream-join',
+  keyGenerator: userActionKey,
+  message: 'Too many stream join attempts',
+});
+
+const sessionMutationRateLimit = createExpressRateLimit({
+  windowMs: 60_000,
+  max: Number(process.env.SESSION_MUTATION_RATE_LIMIT_MAX || 45),
+  keyPrefix: 'session-mutation',
+  keyGenerator: userActionKey,
+  message: 'Too many session actions',
+});
+
+const expensiveSessionActionRateLimit = createExpressRateLimit({
+  windowMs: 60_000,
+  max: Number(process.env.SESSION_EXPENSIVE_ACTION_RATE_LIMIT_MAX || 8),
+  keyPrefix: 'session-expensive-action',
+  keyGenerator: userActionKey,
+  message: 'Too many expensive session sync actions',
+});
 
 async function finalizeSessionEnd(sessionId) {
   const nowIso = new Date().toISOString();
@@ -179,7 +214,7 @@ router.param('streamId', (req, res, next, streamId) => {
 });
 
 // POST /api/sessions — Create a new session
-router.post('/', requireAuth, async (req, res) => {
+router.post('/', requireAuth, createSessionRateLimit, async (req, res) => {
   try {
     const hostId = req.supabaseUser?.id;
 
@@ -423,7 +458,7 @@ router.get('/watch/:code', async (req, res) => {
 });
 
 // POST /api/sessions/:id/streams — Add a stream to a session (participant joining)
-router.post('/:id/streams', requireAuth, async (req, res) => {
+router.post('/:id/streams', requireAuth, streamJoinRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.supabaseUser?.id;
@@ -523,7 +558,7 @@ router.post('/:id/streams', requireAuth, async (req, res) => {
 });
 
 // POST /api/sessions/:id/promote-anchor — Promote a stream to anchor
-router.post('/:id/promote-anchor', requireAuth, async (req, res) => {
+router.post('/:id/promote-anchor', requireAuth, sessionMutationRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
     const { streamId } = req.body;
@@ -582,7 +617,7 @@ router.post('/:id/promote-anchor', requireAuth, async (req, res) => {
 });
 
 // POST /api/sessions/:id/sync-to-latest — Promote the latest-starting synced stream to anchor
-router.post('/:id/sync-to-latest', requireAuth, async (req, res) => {
+router.post('/:id/sync-to-latest', requireAuth, expensiveSessionActionRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -659,7 +694,7 @@ router.post('/:id/sync-to-latest', requireAuth, async (req, res) => {
 // PATCH /api/sessions/:id/streams/:streamId/start-time — Persist YouTube stream start time
 // Called by the client after player.getVideoStartTime() resolves, so VOD recalculation
 // works correctly even after a server restart (no audio data retained between restarts).
-router.patch('/:id/streams/:streamId/start-time', requireAuth, async (req, res) => {
+router.patch('/:id/streams/:streamId/start-time', requireAuth, sessionMutationRateLimit, async (req, res) => {
   try {
     const { id, streamId } = req.params;
     const { startTime } = req.body; // Unix timestamp (seconds) from YT IFrame API
@@ -703,7 +738,7 @@ router.patch('/:id/streams/:streamId/start-time', requireAuth, async (req, res) 
 // POST /api/sessions/:id/backfill-start-times — Fetch actualStartTime from YouTube API
 // for any stream in the session that is missing youtube_start_time.
 // Useful for VODs where start times were never captured during the live session.
-router.post('/:id/backfill-start-times', requireAuth, async (req, res) => {
+router.post('/:id/backfill-start-times', requireAuth, expensiveSessionActionRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -747,7 +782,7 @@ router.post('/:id/backfill-start-times', requireAuth, async (req, res) => {
 });
 
 // PATCH /api/sessions/:id/streams/:streamId/offset — Update a stream's offset
-router.patch('/:id/streams/:streamId/offset', requireAuth, async (req, res) => {
+router.patch('/:id/streams/:streamId/offset', requireAuth, sessionMutationRateLimit, async (req, res) => {
   try {
     const { id, streamId } = req.params;
     const { offsetSeconds } = req.body;
@@ -774,7 +809,7 @@ router.patch('/:id/streams/:streamId/offset', requireAuth, async (req, res) => {
 });
 
 // POST /api/sessions/:id/streams/:streamId/auto-inactive — auto-archive a stream that ended/offlined
-router.post('/:id/streams/:streamId/auto-inactive', requireAuth, async (req, res) => {
+router.post('/:id/streams/:streamId/auto-inactive', requireAuth, sessionMutationRateLimit, async (req, res) => {
   try {
     const { id, streamId } = req.params;
     const authUser = req.supabaseUser;
@@ -819,7 +854,7 @@ router.post('/:id/streams/:streamId/auto-inactive', requireAuth, async (req, res
 });
 
 // POST /api/sessions/:id/leave — Participant leaves a session (archives their stream)
-router.post('/:id/leave', requireAuth, async (req, res) => {
+router.post('/:id/leave', requireAuth, sessionMutationRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
     const authUser = req.supabaseUser;
@@ -869,7 +904,7 @@ router.post('/:id/leave', requireAuth, async (req, res) => {
 });
 
 // POST /api/sessions/:id/end — End a session
-router.post('/:id/end', requireAuth, async (req, res) => {
+router.post('/:id/end', requireAuth, sessionMutationRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
     console.log(`[API] POST /api/sessions/${id}/end — user=${req.supabaseUser?.id?.slice(0, 8) ?? 'unknown'}`);
@@ -899,7 +934,7 @@ router.post('/:id/end', requireAuth, async (req, res) => {
 });
 
 // POST /api/sessions/:id/delegate — host grants controls to another participant
-router.post('/:id/delegate', requireAuth, async (req, res) => {
+router.post('/:id/delegate', requireAuth, sessionMutationRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
     const { delegateeUserId } = req.body;
@@ -948,7 +983,7 @@ router.post('/:id/delegate', requireAuth, async (req, res) => {
 // DELETE /api/sessions/:id/streams/:streamId — host removes a participant
 // Sets is_active=false on the stream and broadcasts STREAM_REMOVED to all
 // session clients so every filmstrip updates instantly.
-router.delete('/:id/streams/:streamId', requireAuth, async (req, res) => {
+router.delete('/:id/streams/:streamId', requireAuth, sessionMutationRateLimit, async (req, res) => {
   try {
     const { id, streamId } = req.params;
     const authUser = req.supabaseUser;
@@ -1009,7 +1044,7 @@ router.delete('/:id/streams/:streamId', requireAuth, async (req, res) => {
 });
 
 // POST /api/sessions/:id/revoke-control — host takes controls back
-router.post('/:id/revoke-control', requireAuth, async (req, res) => {
+router.post('/:id/revoke-control', requireAuth, sessionMutationRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
 

@@ -2,6 +2,78 @@ import { useEffect, useRef, memo, useCallback } from 'react';
 import { loadYouTubeAPI } from '../lib/youtube';
 import { extractYouTubeVideoId } from '../../../shared/helpers.js';
 
+const YOUTUBE_QUALITY_PREFERENCE = [
+  'highres',
+  'hd2160',
+  'hd1440',
+  'hd1080',
+  'hd720',
+  'large',
+  'medium',
+  'small',
+  'tiny',
+  'auto',
+];
+
+function getBestYouTubeQuality(player) {
+  if (!player || typeof player.getAvailableQualityLevels !== 'function') return null;
+
+  const available = player.getAvailableQualityLevels?.() || [];
+  for (const quality of YOUTUBE_QUALITY_PREFERENCE) {
+    if (available.includes(quality)) return quality;
+  }
+
+  return available[0] || null;
+}
+
+function applyBestYouTubeQuality(player) {
+  if (!player || typeof player.setPlaybackQuality !== 'function') return;
+
+  const bestQuality = getBestYouTubeQuality(player);
+  if (!bestQuality || bestQuality === 'auto') return;
+
+  try {
+    player.setPlaybackQuality(bestQuality);
+  } catch (_) {}
+}
+
+const QUALITY_MODE_LEVELS = {
+  highest: ['highres', 'hd2160', 'hd1440', 'hd1080', 'hd720'],
+  high: ['hd1080', 'hd720', 'large'],
+  datasaver: ['small', 'tiny', 'medium'],
+  auto: null,
+};
+
+function applyYouTubeQualityMode(player, qualityMode) {
+  if (!player || typeof player.setPlaybackQuality !== 'function') return;
+
+  if (qualityMode === 'auto' || !QUALITY_MODE_LEVELS[qualityMode]) {
+    try { player.setPlaybackQuality('auto'); } catch (_) {}
+    // Also clear any pinned range so YouTube can auto-adjust again
+    try { player.setPlaybackQualityRange?.('auto', 'auto'); } catch (_) {}
+    return;
+  }
+
+  const available = player.getAvailableQualityLevels?.() || [];
+  const preferred = QUALITY_MODE_LEVELS[qualityMode];
+  let chosen = null;
+  for (const q of preferred) {
+    if (available.includes(q)) { chosen = q; break; }
+  }
+  if (!chosen && available.length > 0) {
+    chosen = qualityMode === 'datasaver' ? available[available.length - 1] : available[0];
+  }
+  if (!chosen) return;
+
+  try { player.setPlaybackQuality(chosen); } catch (_) {}
+  // For 'high' and 'datasaver', also try setPlaybackQualityRange to pin the
+  // quality — this is more reliable on modern YouTube embeds where
+  // setPlaybackQuality alone is often ignored.
+  if (qualityMode === 'high' || qualityMode === 'datasaver') {
+    try { player.setPlaybackQualityRange?.(chosen, chosen); } catch (_) {}
+  }
+}
+
 /**
  * Persistent YouTube player — created once, never destroyed on swap.
  *
@@ -15,6 +87,7 @@ import { extractYouTubeVideoId } from '../../../shared/helpers.js';
 function YouTubePlayer({
   youtubeUrl,
   isMain = false,
+  qualityMode = 'highest',
   onReady,
   onStateChange,
   onError,
@@ -27,11 +100,18 @@ function YouTubePlayer({
   const onReadyRef = useRef(onReady);
   const onStateChangeRef = useRef(onStateChange);
   const onErrorRef = useRef(onError);
+  const qualityModeRef = useRef(qualityMode);
 
   // Keep callback refs current so event handlers always call the latest version
   useEffect(() => { onReadyRef.current = onReady; }, [onReady]);
   useEffect(() => { onStateChangeRef.current = onStateChange; }, [onStateChange]);
   useEffect(() => { onErrorRef.current = onError; }, [onError]);
+  useEffect(() => { qualityModeRef.current = qualityMode; }, [qualityMode]);
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    applyYouTubeQualityMode(player, qualityMode);
+  }, [qualityMode]);
 
   const videoId = extractYouTubeVideoId(youtubeUrl);
 
@@ -56,6 +136,12 @@ function YouTubePlayer({
     if (!videoId) return;
 
     let destroyed = false;
+
+    const prioritizeQuality = () => {
+      const player = playerRef.current;
+      if (!player) return;
+      applyYouTubeQualityMode(player, qualityModeRef.current);
+    };
 
     async function init() {
       await loadYouTubeAPI();
@@ -91,10 +177,14 @@ function YouTubePlayer({
         events: {
           onReady: (event) => {
             if (destroyed) return;
+            prioritizeQuality();
             if (onReadyRef.current) onReadyRef.current(event.target);
           },
           onStateChange: (event) => {
             if (destroyed) return;
+            if (event?.data === window.YT?.PlayerState?.PLAYING) {
+              prioritizeQuality();
+            }
             if (onStateChangeRef.current) onStateChangeRef.current(event.data);
           },
           onError: (event) => {

@@ -1,6 +1,7 @@
 import { WebSocketServer } from 'ws';
 import * as syncManager from '../services/syncManager.js';
 import { createUserClient, supabaseAdmin } from '../lib/supabase.js';
+import { createWebSocketRateLimit } from '../lib/rateLimit.js';
 
 // Store active connections per session
 // Map<sessionId, Set<WebSocket>>
@@ -14,6 +15,18 @@ const MAX_CONNECTIONS_PER_USER_SESSION = 3;
 // Per-IP spectator connection limit (prevents anonymous WS flooding)
 const spectatorCounts = new Map();  // Map<ip, number>
 const MAX_SPECTATOR_CONNECTIONS_PER_IP = 10;
+const wsConnectionAttemptRateLimit = createWebSocketRateLimit({
+  windowMs: 60_000,
+  max: Number(process.env.WS_CONNECTION_ATTEMPT_RATE_LIMIT_MAX || 30),
+  keyPrefix: 'ws-connection-attempt',
+  keyGenerator: (context) => context.clientIp,
+});
+const wsInboundMessageRateLimit = createWebSocketRateLimit({
+  windowMs: 10_000,
+  max: Number(process.env.WS_INBOUND_MESSAGE_RATE_LIMIT_MAX || 120),
+  keyPrefix: 'ws-inbound-message',
+  keyGenerator: (context) => context.connectionKey,
+});
 
 // In-memory control delegation state: Map<sessionId, { hostUserId, delegateeUserId|null }>
 const controlState = new Map();
@@ -75,6 +88,13 @@ export function setupWebSocket(server) {
 
     // Derive IP for spectator rate limiting
     const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
+    const connectionKey = `${clientIp}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+
+    const connectionAttempt = wsConnectionAttemptRateLimit({ clientIp });
+    if (!connectionAttempt.allowed) {
+      ws.close(1008, 'too many websocket connection attempts');
+      return;
+    }
 
     const attachClient = () => {
       ws.sessionId = sessionId;
@@ -179,6 +199,12 @@ export function setupWebSocket(server) {
 
     ws.on('message', (data) => {
       try {
+        const inboundResult = wsInboundMessageRateLimit({ connectionKey });
+        if (!inboundResult.allowed) {
+          ws.close(1008, 'too many websocket messages');
+          return;
+        }
+
         // Spectators cannot send messages
         if (ws.role === 'spectator') {
           return;

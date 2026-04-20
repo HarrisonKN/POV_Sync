@@ -21,18 +21,18 @@ export const SYNC_STATUS = {
 
 // Sync status display config
 export const SYNC_INDICATORS = {
-  synced:    { emoji: '🟢', label: 'Synced' },
-  syncing:   { emoji: '🟡', label: 'Syncing' },
-  drifted:   { emoji: '🔴', label: 'Drifted' },
-  waiting:   { emoji: '⚪', label: 'Waiting' },
-  buffering: { emoji: '🔵', label: 'Buffering' },
+  synced:    { emoji: 'Synced', label: 'Synced' },
+  syncing:   { emoji: 'Syncing', label: 'Syncing' },
+  drifted:   { emoji: 'Drifted', label: 'Drifted' },
+  waiting:   { emoji: 'Waiting', label: 'Waiting' },
+  buffering: { emoji: 'Buffering', label: 'Buffering' },
 };
 
 // Role indicators
 export const ROLE_INDICATORS = {
-  anchor: { emoji: '⚓', label: 'Anchor' },
-  host:   { emoji: '👑', label: 'Host' },
-  control:{ emoji: '🎮', label: 'Control' },
+  anchor: { emoji: 'Anchor', label: 'Anchor' },
+  host:   { emoji: 'Host', label: 'Host' },
+  control:{ emoji: 'Control', label: 'Control' },
 };
 
 // Offset step sizes in seconds

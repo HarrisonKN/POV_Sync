@@ -1385,7 +1385,7 @@ export default function Viewer() {
   if (error) {
     return (
       <ErrorState
-        icon="📺"
+        icon="Room"
         title="Session not found"
         message={error}
         secondary={{ label: '← Home', to: '/' }}
@@ -1613,7 +1613,7 @@ export default function Viewer() {
                   disabled={ending}
                   className="text-[10px] sm:text-xs font-mono bg-pov-danger/10 border border-pov-danger/30 text-pov-danger hover:bg-pov-danger/20 rounded px-2.5 sm:px-3 py-1.5 transition-colors disabled:opacity-50 flex-shrink-0"
                 >
-                  {ending ? 'Ending...' : '⏹ End Session'}
+                  {ending ? 'Ending...' : 'End Session'}
                 </button>
               )}
 
@@ -1623,7 +1623,7 @@ export default function Viewer() {
                   disabled={leaving}
                   className="text-[10px] sm:text-xs font-mono bg-pov-danger/10 border border-pov-danger/30 text-pov-danger hover:bg-pov-danger/20 rounded px-2.5 sm:px-3 py-1.5 transition-colors disabled:opacity-50 flex-shrink-0"
                 >
-                  {leaving ? 'Leaving...' : '🚪 Leave'}
+                  {leaving ? 'Leaving...' : 'Leave'}
                 </button>
               )}
             </div>
@@ -1982,7 +1982,7 @@ export default function Viewer() {
       {/* VOD notice bar */}
       {isVod && (
         <div className="bg-pov-surface border border-pov-border rounded-lg px-4 py-3 mt-3 flex items-center gap-3">
-          <span className="text-pov-muted text-xs font-mono">📼 VOD</span>
+          <span className="text-pov-muted text-xs font-mono">VOD</span>
           <span className="text-xs text-pov-muted/70">
             Saved offsets applied automatically. Switch POVs freely.
           </span>
@@ -2011,15 +2011,15 @@ export default function Viewer() {
             {/* Delegated-control indicator for the delegate */}
             {!isHost && hasControl && (
               <span className="text-[10px] sm:text-xs font-mono px-2 py-0.5 rounded border border-pov-accent/40 text-pov-accent bg-pov-accent/10">
-                🎮 Delegated to you
+                Delegated to you
               </span>
             )}
           </div>
           <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2">
-            <ControlButton label="▶ Play All" onClick={handlePlayAll} />
-            <ControlButton label="⏸ Pause All" onClick={handlePauseAll} />
-            <ControlButton label="📡 Go Live" onClick={handleGoLive} />
-            <ControlButton label="🔁 Re-sync" onClick={handleResync} />
+            <ControlButton label="Play All" onClick={handlePlayAll} />
+            <ControlButton label="Pause All" onClick={handlePauseAll} />
+            <ControlButton label="Go Live" onClick={handleGoLive} />
+            <ControlButton label="Re-sync" onClick={handleResync} />
           </div>
         </div>
       )}
@@ -2255,7 +2255,7 @@ function LinkRow({ label, url }) {
             : 'border-pov-border text-pov-muted hover:text-pov-text hover:border-pov-muted'
         }`}
       >
-        {copied ? '✓' : 'Copy'}
+        {copied ? 'Copied' : 'Copy'}
       </button>
     </div>
   );
@@ -2353,8 +2353,8 @@ function SyncStatusPanel({ streams, syncStats, onApplyLatestBaseline, applyingLa
     const hasPersistedStart = Number.isFinite(stream?.youtube_start_time) && stream.youtube_start_time > 0;
 
     if (isTwitch) return { dot: '●', color: 'text-pov-muted/40', label: 'Unsupported', detail: 'Twitch live timing is not persisted' };
-    if (isAnchor && hasPersistedStart) return { dot: '⚓', color: 'text-pov-accent', label: 'Baseline', detail: 'Current room baseline' };
-    if (isAnchor) return { dot: '⚓', color: 'text-pov-muted', label: 'Anchor', detail: 'Waiting for confirmed start time' };
+    if (isAnchor && hasPersistedStart) return { dot: 'Anchor', color: 'text-pov-accent', label: 'Baseline', detail: 'Current room baseline' };
+    if (isAnchor) return { dot: 'Anchor', color: 'text-pov-muted', label: 'Anchor', detail: 'Waiting for confirmed start time' };
     if (hasPersistedStart) return { dot: '●', color: 'text-pov-success', label: 'Confirmed', detail: 'Saved in Supabase and ready for VOD' };
     if (hasLiveStart) return { dot: '●', color: 'text-yellow-400', label: 'Saving', detail: 'Live start detected; waiting for Supabase confirmation' };
     return { dot: '●', color: 'text-pov-muted/40', label: 'Waiting', detail: 'Needs a stable YouTube start time' };
@@ -2589,7 +2589,7 @@ function OffsetControls({ streamId, isAnchor, offset, onStep, onPromoteAnchor })
       {/* Offset readout + promote button */}
       <div className="flex items-center justify-between mb-0.5 px-0.5">
         <span className={`text-[10px] font-mono ${isAnchor ? 'text-pov-muted/40' : 'text-pov-accent'}`}>
-          {isAnchor ? '⚓ anchor' : fmt(offset)}
+          {isAnchor ? 'anchor' : fmt(offset)}
         </span>
         <div className="flex items-center gap-1">
           {!isAnchor && (
@@ -2598,7 +2598,7 @@ function OffsetControls({ streamId, isAnchor, offset, onStep, onPromoteAnchor })
               title="Promote to anchor"
               className="text-[8px] font-mono text-pov-muted/50 hover:text-pov-muted border border-pov-border/50 rounded px-1 py-0.5 leading-none transition-colors"
             >
-              ⚓
+              anchor
             </button>
           )}
         </div>
@@ -2651,7 +2651,7 @@ function AnchorDeadBanner({ streams, onPromote, onDismiss }) {
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1">
           <p className="text-sm font-semibold text-pov-danger mb-1">
-            ⚠️ Anchor stream ended
+            Anchor stream ended
           </p>
           <p className="text-xs text-pov-muted mb-3">
             The reference stream is no longer available. Promote a replacement anchor to keep sync running.
@@ -2663,7 +2663,7 @@ function AnchorDeadBanner({ streams, onPromote, onDismiss }) {
                 onClick={() => onPromote(stream.id)}
                 className="text-xs font-mono bg-pov-surface border border-pov-border rounded px-3 py-1.5 text-pov-text hover:border-pov-accent hover:text-pov-accent transition-colors"
               >
-                ⚓ Promote {stream.display_name}
+                Set {stream.display_name} as anchor
               </button>
             ))}
           </div>
@@ -2702,7 +2702,7 @@ function ControlDelegationPanel({ streams, session, controlHolderUserId, onDeleg
           </span>
           {controlHolderUserId && (
             <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-pov-accent/30 text-pov-accent bg-pov-accent/10">
-              🎮 Active
+              Active
             </span>
           )}
         </div>
@@ -2726,7 +2726,7 @@ function ControlDelegationPanel({ streams, session, controlHolderUserId, onDeleg
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-mono text-pov-text">{stream.display_name}</span>
                   {isHolder && (
-                    <span className="text-[10px] font-mono text-pov-accent">🎮 has controls</span>
+                    <span className="text-[10px] font-mono text-pov-accent">has controls</span>
                   )}
                 </div>
                 {isHolder ? (
@@ -2801,7 +2801,7 @@ function ParticipantBar({ session, streams, effectiveSyncStats, controlHolderUse
         <>
           <span className="text-pov-border hidden sm:inline">|</span>
           <span className="text-pov-accent flex items-center gap-1">
-            <span className="text-[10px]">🎮</span> <span className="hidden sm:inline">You have controls</span><span className="sm:hidden">Controls</span>
+            <span className="hidden sm:inline">You have controls</span><span className="sm:hidden">Controls</span>
           </span>
         </>
       )}

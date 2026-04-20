@@ -348,10 +348,10 @@ export default function Home() {
             {/* Right: Visual feature cards — visible on all screens */}
             <div className="grid grid-cols-2 gap-2 sm:gap-3 animate-in" style={{ animationDelay: '0.1s' }}>
               {[
-                { icon: '📺', title: 'Multi-POV', desc: 'Up to 8 YouTube & Twitch streams synced' },
-                { icon: '🔗', title: 'One-Click Join', desc: 'Share a link, squad joins instantly' },
-                { icon: '⚡', title: 'Auto Sync', desc: 'UTC-based offset, zero-latency sync' },
-                { icon: '🎮', title: 'Gaming First', desc: 'Built for competitive & co-op streams' },
+                { icon: 'POV', title: 'Multi-POV', desc: 'Up to 8 YouTube & Twitch streams synced' },
+                { icon: 'LINK', title: 'One-Click Join', desc: 'Share a link, squad joins instantly' },
+                { icon: 'SYNC', title: 'Auto Sync', desc: 'UTC-based offset, zero-latency sync' },
+                { icon: 'GAME', title: 'Gaming First', desc: 'Built for competitive & co-op streams' },
               ].map((f) => (
                 <div
                   key={f.title}
@@ -632,9 +632,9 @@ export default function Home() {
           {/* Feature highlights */}
           <div className="grid sm:grid-cols-3 gap-4">
             {[
-              { icon: '🎯', title: 'Perfect Sync', desc: 'UTC-based sync keeps everyone on the same frame' },
-              { icon: '👥', title: 'Squad Ready', desc: 'Up to 8 POVs in a single session, switch freely' },
-              { icon: '🔒', title: 'Private Sessions', desc: 'Only people with your invite link can join' },
+              { icon: 'SYNC', title: 'Perfect Sync', desc: 'UTC-based sync keeps everyone on the same frame' },
+              { icon: 'TEAM', title: 'Squad Ready', desc: 'Up to 8 POVs in a single session, switch freely' },
+              { icon: 'LOCK', title: 'Private Sessions', desc: 'Only people with your invite link can join' },
             ].map((f) => (
               <div key={f.title} className="bg-pov-surface border border-pov-border rounded-xl p-5 text-center">
                 <span className="text-2xl mb-3 block">{f.icon}</span>

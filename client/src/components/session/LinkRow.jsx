@@ -23,7 +23,7 @@ export default function LinkRow({ label, url }) {
             : 'border-pov-border text-pov-muted hover:text-pov-text hover:border-pov-muted'
         }`}
       >
-        {copied ? '✓' : 'Copy'}
+        {copied ? 'Copied' : 'Copy'}
       </button>
     </div>
   );

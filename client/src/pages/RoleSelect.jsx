@@ -49,7 +49,7 @@ export default function RoleSelect() {
   if (error || !session) {
     return (
       <ErrorState
-        icon="🔗"
+        icon="Link"
         title="Invalid invite link"
         message={error || 'This link does not match any session.'}
         helper="Ask your host for an updated link, or enter a join code on the home page."
@@ -153,7 +153,7 @@ export default function RoleSelect() {
                 key={s.id}
                 className="text-xs font-mono bg-pov-bg border border-pov-border rounded-full px-3 py-1 text-pov-text flex items-center gap-1.5"
               >
-                {s.is_anchor && <span className="text-pov-accent text-[10px]">⚓</span>}
+                {s.is_anchor && <span className="text-pov-accent text-[10px]">Anchor</span>}
                 {s.display_name}
               </span>
             ))}
@@ -172,7 +172,6 @@ export default function RoleSelect() {
           onClick={joinAsSpectator}
           className="glass-card text-left rounded-2xl border border-pov-border p-5 hover:border-white/18 transition-colors"
         >
-          <div className="mb-3 text-2xl">👁</div>
           <h2 className="text-base font-bold font-mono text-pov-text mb-1">Watch</h2>
           <p className="text-xs text-pov-muted leading-relaxed mb-4">
             Watch all POVs in read-only mode. No account required.
@@ -197,7 +196,6 @@ export default function RoleSelect() {
               : 'border-pov-border hover:border-pov-accent/40'
           }`}
         >
-          <div className="mb-3 text-2xl">🎥</div>
           <h2 className="text-base font-bold font-mono text-pov-text mb-1">Join as Participant</h2>
           {isEnded ? (
             <p className="text-xs text-pov-muted leading-relaxed mb-4">
