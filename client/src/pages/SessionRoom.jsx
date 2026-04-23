@@ -127,6 +127,8 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
   const lastSeekTs = useRef(0);
   // VOD: per-stream timestamp of last user-initiated seek — prevents anchor BUFFERING handler from undoing manual seeks
   const lastStreamSeekTs = useRef({});
+  // Ref to saveOffset so handleStageStateChange can call it without a forward-reference dep
+  const saveOffsetRef = useRef(null);
   const saveTimers = useRef({});
   const wsRef = useRef(null);
   const wsStartTimesRef = useRef(new Set());
@@ -767,7 +769,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
               const newOffset = anchorTime - streamTime;
               lastStreamSeekTs.current[streamId] = Date.now();
               setOffsets((prev) => ({ ...prev, [streamId]: newOffset }));
-              saveOffset(streamId, newOffset);
+              saveOffsetRef.current?.(streamId, newOffset);
               console.log(`[VOD] User seeked ${streamId} → recalculated offset = ${newOffset.toFixed(1)}s`);
             }
           } catch (_) {}
@@ -789,7 +791,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
       if (film) { try { playing ? film.playVideo() : film.pauseVideo(); } catch (_) {} }
     }
     syncingRef.current = false;
-  }, [isSpectator, reportStreamInactive, saveOffset]);
+  }, [isSpectator, reportStreamInactive]);
 
   const handleStageError = useCallback((streamId, errorCode) => {
     if (sessionRef.current?.status === 'ended' || isSpectator) return;
@@ -1040,6 +1042,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
       } catch (err) { console.error('[Offset] Save failed:', err); }
     }, 800);
   }, [sessionId, getAccessToken]);
+  saveOffsetRef.current = saveOffset;
 
   const stepOffset = useCallback((streamId, deltaSeconds) => {
     setOffsets((prev) => {
