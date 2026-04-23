@@ -660,7 +660,14 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
     playerRefs.current[streamId] = player;
     const streams = streamsRef.current;
     if (!streams.length) return;
-    if (typeof streamId === 'string' && streamId.startsWith('film-')) return;
+    if (typeof streamId === 'string' && streamId.startsWith('film-')) {
+      // Layout swap (horizontal ↔ vertical) unmounts and remounts filmstrip iframes.
+      // Seek the newly-mounted film player to the stage player's current time so it
+      // doesn't restart from 0.
+      const baseId = streamId.slice('film-'.length);
+      window.setTimeout(() => syncMirroredPair(baseId, baseId), 150);
+      return;
+    }
     const sessionStatus = sessionRef.current?.status;
     syncMirroredPair(streamId, streamId);
     // Always report synthetic start time (for UTC labels), even in VOD
