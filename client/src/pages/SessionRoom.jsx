@@ -22,7 +22,6 @@ import InfoPill from '../components/session/InfoPill';
 import LinkRow from '../components/session/LinkRow';
 import CycleViewPicker from '../components/session/CycleViewPicker';
 import ControlButton from '../components/session/ControlButton';
-import OffsetControls from '../components/session/OffsetControls';
 import AnchorDeadBanner from '../components/session/AnchorDeadBanner';
 import ControlDelegationPanel from '../components/session/ControlDelegationPanel';
 import ParticipantBar from '../components/session/ParticipantBar';
@@ -1279,14 +1278,6 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
         </AnimatePresence>
       </motion.div>
 
-      {/* ── Participant bars ──────────────────────────────────────────────────── */}
-      {!isHost && !isSpectator && !isVod && session && (
-        <ParticipantBar role={role} session={session} streams={visibleStreams} effectiveSyncStats={effectiveSyncStats} controlHolderUserId={controlHolderUserId} userId={user?.id} />
-      )}
-      {isHost && !isVod && visibleStreams.length > 1 && (
-        <ParticipantBar role="host" session={session} streams={visibleStreams} effectiveSyncStats={effectiveSyncStats} controlHolderUserId={controlHolderUserId} userId={user?.id} onKick={handleKickParticipant} />
-      )}
-
       {/* ══════════════════════════════════════════════════════════════════════
            SECTION 2 — Viewer / Frames + Controls (desktop: side-by-side)
            ══════════════════════════════════════════════════════════════════════ */}
@@ -1456,10 +1447,6 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
                   </div>
                 </div>
               </motion.button>
-
-              {hasControl && !isVod && !isSpectator && (!isMobileLayout || isActive) && (
-                <OffsetControls streamId={stream.id} isAnchor={stream.is_anchor} offset={offsets[stream.id] ?? 0} onStep={stepOffset} onPromoteAnchor={handlePromoteAnchor} />
-              )}
             </div>
           );
         })}
@@ -1520,9 +1507,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
                         </div>
                       </motion.button>
 
-                      {hasControl && !isVod && !isSpectator && (
-                        <OffsetControls streamId={stream.id} isAnchor={stream.is_anchor} offset={offsets[stream.id] ?? 0} onStep={stepOffset} onPromoteAnchor={handlePromoteAnchor} />
-                      )}
+
                     </div>
                   );
                 })}
@@ -1667,9 +1652,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
                   </div>
                 </motion.button>
 
-                {hasControl && !isVod && !isSpectator && (
-                  <OffsetControls streamId={stream.id} isAnchor={stream.is_anchor} offset={offsets[stream.id] ?? 0} onStep={stepOffset} onPromoteAnchor={handlePromoteAnchor} />
-                )}
+
               </div>
             );
           })}
