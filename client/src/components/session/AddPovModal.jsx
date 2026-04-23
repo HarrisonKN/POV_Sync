@@ -10,6 +10,8 @@ export default function AddPovModal({
   onDisplayNameChange,
   onSubmit,
   onCancel,
+  title = 'Add another POV',
+  submitLabel,
 }) {
   const firstInputRef = useRef(null);
 
@@ -43,7 +45,7 @@ export default function AddPovModal({
       >
         <div className="space-y-1">
           <h2 id="add-pov-modal-title" className="text-lg font-bold font-mono text-pov-text">
-            Add another POV
+            {title}
           </h2>
           <p className="text-sm text-pov-muted">
             Drop in a YouTube or Twitch link to add it to this session.
@@ -99,7 +101,7 @@ export default function AddPovModal({
             className="px-4 py-2 rounded-lg text-sm font-medium bg-pov-accent hover:opacity-90 text-white transition disabled:opacity-60"
             disabled={submitting}
           >
-            {submitting ? 'Adding...' : 'Add POV'}
+            {submitting ? (submitLabel ? 'Saving...' : 'Adding...') : (submitLabel ?? 'Add POV')}
           </button>
         </div>
       </form>

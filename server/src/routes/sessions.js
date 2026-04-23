@@ -1045,6 +1045,92 @@ router.delete('/:id/streams/:streamId', requireAuth, sessionMutationRateLimit, a
   }
 });
 
+// PATCH /api/sessions/:id/streams/:streamId/reactivate — host reactivates a finished stream
+router.patch('/:id/streams/:streamId/reactivate', requireAuth, sessionMutationRateLimit, async (req, res) => {
+  try {
+    const { id, streamId } = req.params;
+    const authUser = req.supabaseUser;
+
+    const { data: session, error: sessionError } = await supabaseAdmin
+      .from('sessions')
+      .select('host_id, status')
+      .eq('id', id)
+      .single();
+
+    if (sessionError || !session) return res.status(404).json({ error: 'Session not found' });
+    if (authUser?.id !== session.host_id) return res.status(403).json({ error: 'Only the host can reactivate a stream' });
+    if (session.status === 'ended') return res.status(400).json({ error: 'Session has already ended' });
+
+    const { data: stream, error: streamError } = await supabaseAdmin
+      .from('streams')
+      .select('id, youtube_url, platform')
+      .eq('id', streamId)
+      .eq('session_id', id)
+      .single();
+
+    if (streamError || !stream) return res.status(404).json({ error: 'Stream not found' });
+
+    await supabaseAdmin
+      .from('streams')
+      .update({ is_active: true, left_at: null })
+      .eq('id', streamId);
+
+    syncManager.addStream(id, streamId, stream.youtube_url, false);
+    broadcastToSession(id, { type: 'STREAM_UPDATED', stream: { id: streamId, is_active: true, left_at: null } });
+
+    res.json({ success: true, streamId });
+  } catch (err) {
+    console.error('Error reactivating stream:', err);
+    res.status(500).json({ error: 'Failed to reactivate stream' });
+  }
+});
+
+// PATCH /api/sessions/:id/streams/:streamId/url — host replaces a finished stream's URL
+router.patch('/:id/streams/:streamId/url', requireAuth, sessionMutationRateLimit, async (req, res) => {
+  try {
+    const { id, streamId } = req.params;
+    const { youtubeUrl, displayName } = req.body;
+    const authUser = req.supabaseUser;
+
+    if (!youtubeUrl) return res.status(400).json({ error: 'youtubeUrl is required' });
+
+    const { data: session, error: sessionError } = await supabaseAdmin
+      .from('sessions')
+      .select('host_id, status')
+      .eq('id', id)
+      .single();
+
+    if (sessionError || !session) return res.status(404).json({ error: 'Session not found' });
+    if (authUser?.id !== session.host_id) return res.status(403).json({ error: 'Only the host can replace a stream' });
+    if (session.status === 'ended') return res.status(400).json({ error: 'Session has already ended' });
+
+    const url = String(youtubeUrl).trim();
+    const platform = detectPlatform(url);
+    if (platform === 'unknown') return res.status(400).json({ error: 'Invalid stream URL. Provide a YouTube or Twitch link.' });
+
+    const updates = { youtube_url: url, platform, is_active: true, left_at: null };
+    if (displayName) updates.display_name = String(displayName).trim().slice(0, 40);
+
+    const { data: updatedStream, error: updateError } = await supabaseAdmin
+      .from('streams')
+      .update(updates)
+      .eq('id', streamId)
+      .eq('session_id', id)
+      .select()
+      .single();
+
+    if (updateError) throw updateError;
+
+    syncManager.addStream(id, streamId, url, false);
+    broadcastToSession(id, { type: 'STREAM_UPDATED', stream: updatedStream });
+
+    res.json({ success: true, stream: updatedStream });
+  } catch (err) {
+    console.error('Error replacing stream URL:', err);
+    res.status(500).json({ error: 'Failed to replace stream' });
+  }
+});
+
 // POST /api/sessions/:id/revoke-control — host takes controls back
 router.post('/:id/revoke-control', requireAuth, sessionMutationRateLimit, async (req, res) => {
   try {
@@ -1071,6 +1157,49 @@ router.post('/:id/revoke-control', requireAuth, sessionMutationRateLimit, async 
   } catch (err) {
     console.error('Error revoking control:', err);
     res.status(500).json({ error: 'Failed to revoke control' });
+  }
+});
+
+/* ── DELETE /api/sessions/:id ─────────────────────────────────────────
+   Permanently deletes an ended session (host only).
+   Streams are removed automatically via ON DELETE CASCADE.
+──────────────────────────────────────────────────────────────────────── */
+router.delete('/:id', requireAuth, sessionMutationRateLimit, async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    // Fetch the session to verify ownership and status
+    const { data: session, error: fetchError } = await supabaseAdmin
+      .from('sessions')
+      .select('host_id, status')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    const authUser = req.supabaseUser;
+    if (authUser?.id !== session.host_id) {
+      return res.status(403).json({ error: 'Only the host can delete this session' });
+    }
+
+    if (session.status === 'live') {
+      return res.status(400).json({ error: 'Cannot delete a live session. End the session first.' });
+    }
+
+    const { error: deleteError } = await supabaseAdmin
+      .from('sessions')
+      .delete()
+      .eq('id', id);
+
+    if (deleteError) throw deleteError;
+
+    console.log(`[API] Session ${id.slice(0, 8)} deleted by host ${authUser.id.slice(0, 8)}`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error deleting session:', err);
+    res.status(500).json({ error: 'Failed to delete session' });
   }
 });
 

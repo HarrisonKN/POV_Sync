@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useActiveSession } from '../hooks/useActiveSession';
@@ -7,6 +7,7 @@ import SessionResumeCard from '../components/SessionResumeCard';
 import FollowButton from '../components/FollowButton';
 import { fetchFollowLists, fetchProfileSessions, followUser, unfollowUser } from '../lib/social';
 import ProfileSkeleton from '../components/ProfileSkeleton';
+import ConfirmModal from '../components/ConfirmModal';
 
 const MAX_AVATAR_PIPS = 4;
 const TABS = ['All', 'Hosted', 'Joined', 'VODs'];
@@ -322,7 +323,16 @@ export default function Profile() {
       {filteredSessions.length > 0 ? (
         <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 animate-in-stagger">
           {filteredSessions.map((session) => (
-            <SessionCard key={session.id} session={session} targetUserId={targetUserId} />
+            <SessionCard
+              key={session.id}
+              session={session}
+              targetUserId={targetUserId}
+              isOwner={isOwnProfile}
+              onDeleted={(id) => {
+                setHostedSessions((prev) => prev.filter((s) => s.id !== id));
+                setParticipatedSessions((prev) => prev.filter((s) => s.id !== id));
+              }}
+            />
           ))}
         </div>
       ) : (
@@ -431,7 +441,8 @@ function EmptyState({ tab, isOwnProfile }) {
 
 /* ── Session card (grid version) ────────────────────────────── */
 
-function SessionCard({ session, targetUserId }) {
+function SessionCard({ session, targetUserId, isOwner = false, onDeleted }) {
+  const { user } = useAuth();
   const allStreams = session.streams || [];
   const streams = session.status === 'live'
     ? allStreams.filter((stream) => stream.is_active !== false)
@@ -439,6 +450,11 @@ function SessionCard({ session, targetUserId }) {
   const isLive  = session.status === 'live';
   const isVod   = session.status === 'ended';
   const [povExpanded, setPovExpanded] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const menuRef = useRef(null);
 
   const href = `/session/${session.id}?pov=${targetUserId}`;
   const pips = streams.slice(0, MAX_AVATAR_PIPS);
@@ -448,12 +464,69 @@ function SessionCard({ session, targetUserId }) {
     month: 'short', day: 'numeric', year: 'numeric',
   });
 
+  // Close menu on outside click or Escape
+  useEffect(() => {
+    if (!menuOpen) return;
+    function handleClickOutside(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setMenuOpen(false);
+      }
+    }
+    function handleKeyDown(e) {
+      if (e.key === 'Escape') setMenuOpen(false);
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('touchstart', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [menuOpen]);
+
+  async function handleDelete() {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const { data: { session: authSession } } = await supabase.auth.getSession();
+      const token = authSession?.access_token;
+      const res = await fetch(`/api/sessions/${session.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Failed to delete session');
+      }
+      onDeleted?.(session.id);
+    } catch (err) {
+      setDeleteError(err.message);
+      setConfirmOpen(false);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
+    <>
+    <ConfirmModal
+      open={confirmOpen}
+      title="Delete session?"
+      message={`This will permanently delete this session and all its POVs. This cannot be undone.`}
+      confirmLabel={deleting ? 'Deleting…' : 'Delete'}
+      destructive
+      onConfirm={handleDelete}
+      onCancel={() => setConfirmOpen(false)}
+    />
     <div className={`bg-pov-surface border rounded-xl overflow-hidden transition-all hover:-translate-y-0.5 hover:shadow-md ${
       isLive ? 'border-pov-success/30 hover:border-pov-success/50' : 'border-pov-border hover:border-pov-muted'
     }`}>
+      {deleteError && (
+        <div className="px-4 pt-3 text-xs text-red-400 font-mono">{deleteError}</div>
+      )}
       <Link to={href} className="block p-4 group">
-        {/* Avatar pips + badge */}
+        {/* Avatar pips + badge + options menu */}
         <div className="flex items-center justify-between mb-3">
           <div className="flex -space-x-1.5 flex-shrink-0">
             {pips.map((stream) =>
@@ -481,15 +554,47 @@ function SessionCard({ session, targetUserId }) {
               </div>
             )}
           </div>
-          <span
-            className={`text-[10px] font-mono px-2 py-0.5 rounded ${
-              isLive
-                ? 'bg-pov-success/15 text-pov-success'
-                : 'bg-pov-muted/10 text-pov-muted'
-            }`}
-          >
-            {isLive ? '● LIVE' : 'VOD'}
-          </span>
+          <div className="flex items-center gap-1.5">
+            <span
+              className={`text-[10px] font-mono px-2 py-0.5 rounded ${
+                isLive
+                  ? 'bg-pov-success/15 text-pov-success'
+                  : 'bg-pov-muted/10 text-pov-muted'
+              }`}
+            >
+              {isLive ? '● LIVE' : 'VOD'}
+            </span>
+            {isOwner && isVod && (
+              <div className="relative" ref={menuRef}>
+                <button
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMenuOpen((v) => !v); }}
+                  className="p-1 rounded-md text-pov-muted hover:text-pov-text hover:bg-pov-border/40 transition-colors"
+                  aria-label="Session options"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+                    <circle cx="8" cy="3" r="1.2" />
+                    <circle cx="8" cy="8" r="1.2" />
+                    <circle cx="8" cy="13" r="1.2" />
+                  </svg>
+                </button>
+                {menuOpen && (
+                  <div className="absolute right-0 top-full mt-1 z-20 min-w-[140px] bg-pov-surface border border-pov-border rounded-xl shadow-lg overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMenuOpen(false); setConfirmOpen(true); }}
+                      className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-red-400 hover:bg-red-500/10 transition-colors"
+                    >
+                      <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                      Delete session
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Info */}
@@ -556,5 +661,6 @@ function SessionCard({ session, targetUserId }) {
         </div>
       )}
     </div>
+    </>
   );
 }

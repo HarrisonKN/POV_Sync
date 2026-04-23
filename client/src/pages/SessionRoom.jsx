@@ -27,6 +27,7 @@ import ControlDelegationPanel from '../components/session/ControlDelegationPanel
 import ParticipantBar from '../components/session/ParticipantBar';
 import AddPovModal from '../components/session/AddPovModal';
 import SyncStatusPanel from '../components/session/SyncStatusPanel';
+import FinishedStreamOverlay from '../components/session/FinishedStreamOverlay';
 
 const ROOM_TILE_MIN_WIDTH = 180;
 const ROOM_TILE_MAX_WIDTH = 840;
@@ -101,6 +102,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
   const [addPovDisplayName, setAddPovDisplayName] = useState('');
   const [addPovSubmitting, setAddPovSubmitting] = useState(false);
   const [addPovError, setAddPovError] = useState(null);
+  const [replacingStreamId, setReplacingStreamId] = useState(null);
 
   // ── Sync / offsets ──────────────────────────────────────────────────────────
   const [offsets, setOffsets] = useState(() => {
@@ -123,6 +125,8 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
   const isPlayingRef = useRef(true);
   const syncingRef = useRef(false);
   const lastSeekTs = useRef(0);
+  // VOD: per-stream timestamp of last user-initiated seek — prevents anchor BUFFERING handler from undoing manual seeks
+  const lastStreamSeekTs = useRef({});
   const saveTimers = useRef({});
   const wsRef = useRef(null);
   const wsStartTimesRef = useRef(new Set());
@@ -146,9 +150,17 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
   useEffect(() => { endingRef.current = ending; }, [ending]);
 
   // ── Sync offsets/streams into refs ─────────────────────────────────────────
+  // During a live session, keep finished (is_active=false) streams visible so
+  // the filmstrip shows the "Ended" overlay rather than removing the card.
+  // VOD sessions already show all streams regardless of is_active.
   const visibleStreams = useMemo(() => (
-    isVod ? streams : (streams || []).filter((s) => s.is_active !== false)
+    isVod ? streams : (streams || [])
   ), [isVod, streams]);
+
+  // Count of streams that are actually live/active — used for canAddPov and the POV counter.
+  const activeStreamCount = useMemo(() => (
+    (streams || []).filter((s) => s.is_active !== false).length
+  ), [streams]);
 
   const streamsRef = useRef(visibleStreams);
   useEffect(() => { streamsRef.current = visibleStreams; }, [visibleStreams]);
@@ -204,8 +216,8 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
 
   // ── Derived display values ──────────────────────────────────────────────────
   const hasControl = isHost || (!!controlHolderUserId && user?.id === controlHolderUserId);
-  const canAddPov = isHost && !isVod && visibleStreams.length < MAX_STREAMS_MVP;
-  const nextPovLabel = `POV ${visibleStreams.length + 1}`;
+  const canAddPov = isHost && !isVod && activeStreamCount < MAX_STREAMS_MVP;
+  const nextPovLabel = `POV ${activeStreamCount + 1}`;
   const hostStream = visibleStreams.find((s) => s.user_id === session?.host_id);
   const hostName = hostStream?.display_name ?? 'Host';
   const anchorStream = visibleStreams.find((s) => s.is_anchor);
@@ -379,6 +391,8 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
             setAnchorDeadBanner(false);
           } else if (msg.type === 'STREAM_REMOVED') {
             onStreamsChange?.((prev) => prev.map((s) => s.id === msg.streamId ? { ...s, is_active: false } : s));
+          } else if (msg.type === 'STREAM_UPDATED') {
+            onStreamsChange?.((prev) => prev.map((s) => s.id === msg.stream?.id ? { ...s, ...msg.stream } : s));
           }
         } catch (err) {
           console.error('[WS] Failed to parse message:', err);
@@ -430,6 +444,8 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
             setSyncStats((prev) => ({ ...(prev || {}), anchorRemoved: true }));
           } else if (msg.type === 'STREAM_REMOVED') {
             onStreamsChange?.((prev) => prev.map((s) => s.id === msg.streamId ? { ...s, is_active: false } : s));
+          } else if (msg.type === 'STREAM_UPDATED') {
+            onStreamsChange?.((prev) => prev.map((s) => s.id === msg.stream?.id ? { ...s, ...msg.stream } : s));
           }
         } catch (err) {
           console.error('[WS] Spectator message parse error:', err);
@@ -709,8 +725,11 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
         const anchorStartTime = localStartTimesRef.current[streamId];
         const useUtc = Number.isFinite(anchorStartTime) && anchorStartTime > 0;
 
+        const VOD_STREAM_SEEK_PROTECT_MS = 12000;
         streamsRef.current.forEach((stream) => {
           if (stream.id === streamId) return;
+          // VOD: if the user manually seeked this stream recently, leave it alone
+          if (sessionRef.current?.status === 'ended' && Date.now() - (lastStreamSeekTs.current[stream.id] ?? 0) < VOD_STREAM_SEEK_PROTECT_MS) return;
           let target;
           if (useUtc) {
             const st = localStartTimesRef.current[stream.id] ?? stream.youtube_start_time;
@@ -733,7 +752,29 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
       }, 350);
       return;
     }
-    if (!isAnchor && state === YT.PlayerState.BUFFERING) return;
+    if (!isAnchor && state === YT.PlayerState.BUFFERING) {
+      // VOD: user manually seeked a non-anchor stream — stamp the time and recalculate
+      // the offset so subsequent anchor syncs land at the right position
+      if (sessionRef.current?.status === 'ended' && !syncingRef.current) {
+        const anchor = streamsRef.current.find((s) => s.is_anchor);
+        const ap = anchor ? playerRefs.current[anchor.id] : null;
+        const sp = playerRefs.current[streamId];
+        if (ap && sp) {
+          try {
+            const anchorTime = ap.getCurrentTime?.() ?? 0;
+            const streamTime = sp.getCurrentTime?.() ?? 0;
+            if (anchorTime > 0 && streamTime > 0) {
+              const newOffset = anchorTime - streamTime;
+              lastStreamSeekTs.current[streamId] = Date.now();
+              setOffsets((prev) => ({ ...prev, [streamId]: newOffset }));
+              saveOffset(streamId, newOffset);
+              console.log(`[VOD] User seeked ${streamId} → recalculated offset = ${newOffset.toFixed(1)}s`);
+            }
+          } catch (_) {}
+        }
+      }
+      return;
+    }
     if (state !== YT.PlayerState.PAUSED && state !== YT.PlayerState.PLAYING) return;
     const playing = state === YT.PlayerState.PLAYING;
     syncingRef.current = true;
@@ -748,10 +789,15 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
       if (film) { try { playing ? film.playVideo() : film.pauseVideo(); } catch (_) {} }
     }
     syncingRef.current = false;
-  }, [isSpectator, reportStreamInactive]);
+  }, [isSpectator, reportStreamInactive, saveOffset]);
 
   const handleStageError = useCallback((streamId, errorCode) => {
     if (sessionRef.current?.status === 'ended' || isSpectator) return;
+    // Twitch fires ENDED via the error callback path — treat it like YouTube's ENDED state.
+    if (errorCode === 'ENDED') {
+      reportStreamInactive(streamId, 'twitch-ended');
+      return;
+    }
     reportStreamInactive(streamId, `player-error:${String(errorCode)}`);
   }, [isSpectator, reportStreamInactive]);
 
@@ -760,6 +806,61 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
     syncMirroredPair(newStreamId, `film-${newStreamId}`);
     setMainStreamId(newStreamId);
   }, [mainStreamId, syncMirroredPair]);
+
+  // Auto-switch non-hosts away from a stream that just ended.
+  // Runs whenever streams change — if the current main stream is now inactive,
+  // jump to the first still-active stream.
+  useEffect(() => {
+    if (isHost || !mainStreamId || !streams) return;
+    const current = streams.find((s) => s.id === mainStreamId);
+    if (!current || current.is_active !== false) return;
+    const nextActive = streams.find((s) => s.is_active !== false);
+    if (nextActive) {
+      syncMirroredPair(nextActive.id, `film-${nextActive.id}`);
+      setMainStreamId(nextActive.id);
+    }
+  }, [streams, mainStreamId, isHost, syncMirroredPair]);
+
+  // ── Finished-stream host actions ────────────────────────────────────────────
+  const handleReplayStream = useCallback(async (streamId) => {
+    // Clear dedup guard so the stream can report inactive again if it re-ends.
+    autoInactiveReportsRef.current.delete(streamId);
+    try {
+      const token = await getAccessToken();
+      await fetch(`/api/sessions/${sessionId}/streams/${streamId}/reactivate`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...(token && { Authorization: `Bearer ${token}` }) },
+      });
+      // Seek to start and play.
+      const stage = playerRefs.current[streamId];
+      const film = playerRefs.current[`film-${streamId}`];
+      try { stage?.seekTo(0, true); stage?.playVideo(); } catch (_) {}
+      try { film?.seekTo(0, true); film?.playVideo(); } catch (_) {}
+    } catch (err) {
+      console.error('[SessionRoom] Replay failed:', err);
+    }
+  }, [getAccessToken, sessionId]);
+
+  const handleReplaceStream = useCallback((streamId) => {
+    const stream = (streams || []).find((s) => s.id === streamId);
+    setReplacingStreamId(streamId);
+    setAddPovUrl('');
+    setAddPovDisplayName(stream?.display_name ?? '');
+    setAddPovError(null);
+    setAddPovOpen(true);
+  }, [streams]);
+
+  const handleClearStream = useCallback(async (streamId) => {
+    try {
+      const token = await getAccessToken();
+      await fetch(`/api/sessions/${sessionId}/streams/${streamId}`, {
+        method: 'DELETE',
+        headers: { ...(token && { Authorization: `Bearer ${token}` }) },
+      });
+    } catch (err) {
+      console.error('[SessionRoom] Clear stream failed:', err);
+    }
+  }, [getAccessToken, sessionId]);
 
   const handleCycleStep = useCallback((direction) => {
     if (!visibleStreams.length) return;
@@ -1099,7 +1200,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
 
   const closeAddPovModal = useCallback(() => {
     if (addPovSubmitting) return;
-    setAddPovOpen(false); setAddPovError(null);
+    setAddPovOpen(false); setAddPovError(null); setReplacingStreamId(null);
   }, [addPovSubmitting]);
 
   const handleAddPov = useCallback(async (e) => {
@@ -1110,20 +1211,33 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
     try {
       setAddPovSubmitting(true); setAddPovError(null);
       const token = await getAccessToken();
-      const res = await fetch(`/api/sessions/${sessionId}/streams`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token && { Authorization: `Bearer ${token}` }) },
-        body: JSON.stringify({ youtubeUrl: streamUrl, displayName }),
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(payload.error || 'Failed to add POV');
-      setAddPovOpen(false); setAddPovUrl(''); setAddPovDisplayName('');
+      if (replacingStreamId) {
+        // Replace mode: update the existing finished stream's URL.
+        const res = await fetch(`/api/sessions/${sessionId}/streams/${replacingStreamId}/url`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', ...(token && { Authorization: `Bearer ${token}` }) },
+          body: JSON.stringify({ youtubeUrl: streamUrl, displayName }),
+        });
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(payload.error || 'Failed to replace POV');
+        // Clear dedup guard so the new video can report inactive if it ends.
+        autoInactiveReportsRef.current.delete(replacingStreamId);
+      } else {
+        const res = await fetch(`/api/sessions/${sessionId}/streams`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(token && { Authorization: `Bearer ${token}` }) },
+          body: JSON.stringify({ youtubeUrl: streamUrl, displayName }),
+        });
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(payload.error || 'Failed to add POV');
+      }
+      setAddPovOpen(false); setAddPovUrl(''); setAddPovDisplayName(''); setReplacingStreamId(null);
     } catch (err) {
       setAddPovError(err.message || 'Failed to add POV');
     } finally {
       setAddPovSubmitting(false);
     }
-  }, [addPovDisplayName, addPovUrl, getAccessToken, sessionId]);
+  }, [addPovDisplayName, addPovUrl, getAccessToken, replacingStreamId, sessionId]);
 
   const renderAddPovTile = useCallback((wrapperClassName, buttonClassName) => (
     <div className={wrapperClassName}>
@@ -1418,11 +1532,12 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
       >
         {visibleStreams.map((stream) => {
           const isActive = stream.id === mainStreamId;
+          const isFinished = !isVod && stream.is_active === false;
           return (
             <div key={`film-wrap-${stream.id}`} className={`flex flex-col gap-1 ${isMobileLayout ? 'w-[210px] shrink-0 snap-start first:pl-0' : ''}`} style={isMobileLayout ? { width: `${effectiveFilmstripTileWidth}px` } : undefined}>
-              <motion.button type="button" layout whileHover={{ y: -2, scale: 1.01 }} whileTap={{ scale: 0.985 }} transition={{ type: 'spring', stiffness: 340, damping: 28 }}
-                onClick={() => handleSwapStream(stream.id)}
-                className={`group relative overflow-hidden rounded-2xl border text-left ${isActive ? 'border-pov-accent/70 shadow-[0_16px_50px_rgba(108,92,231,0.22)]' : 'border-white/8 hover:border-white/18'} glass-card ${isMobileLayout ? 'min-h-full' : ''}`}
+              <motion.button type="button" layout whileHover={isFinished ? {} : { y: -2, scale: 1.01 }} whileTap={isFinished ? {} : { scale: 0.985 }} transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+                onClick={isFinished && !isHost ? undefined : () => handleSwapStream(stream.id)}
+                className={`group relative overflow-hidden rounded-2xl border text-left ${isActive ? 'border-pov-accent/70 shadow-[0_16px_50px_rgba(108,92,231,0.22)]' : 'border-white/8 hover:border-white/18'} glass-card ${isMobileLayout ? 'min-h-full' : ''} ${isFinished && !isHost ? 'cursor-default' : ''}`}
               >
                 <div className="relative aspect-video overflow-hidden bg-black">
                   <div className="pointer-events-none absolute inset-0">
@@ -1434,13 +1549,21 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
                   {stream.is_anchor && (
                     <div className="absolute left-3 top-3 rounded-full border border-white/10 bg-black/35 px-2 py-1 text-[10px] font-mono uppercase tracking-wide text-white/80 backdrop-blur-md">Anchor</div>
                   )}
-                  {isActive && <div className="absolute inset-x-0 top-0 h-0.5 bg-pov-accent shadow-[0_0_18px_rgba(108,92,231,0.6)]" />}
+                  {isActive && !isFinished && <div className="absolute inset-x-0 top-0 h-0.5 bg-pov-accent shadow-[0_0_18px_rgba(108,92,231,0.6)]" />}
+                  {isFinished && (
+                    <FinishedStreamOverlay
+                      isHost={isHost}
+                      onReplay={() => handleReplayStream(stream.id)}
+                      onReplace={() => handleReplaceStream(stream.id)}
+                      onClear={() => handleClearStream(stream.id)}
+                    />
+                  )}
                 </div>
                 <div className="absolute inset-x-0 bottom-0 p-3 pointer-events-none">
                   <div className="glass-pill flex items-center justify-between gap-2 rounded-xl px-3 py-2">
                     <div className="min-w-0">
                       <p className="truncate text-xs font-semibold text-white">{stream.display_name}</p>
-                      <p className="mt-0.5 text-[10px] font-mono uppercase tracking-wide text-white/55">{isActive ? 'On stage' : 'Tap to focus'}</p>
+                      <p className="mt-0.5 text-[10px] font-mono uppercase tracking-wide text-white/55">{isFinished ? 'Stream ended' : isActive ? 'On stage' : 'Tap to focus'}</p>
                       {(() => { const utc = getUtcTimeLabel(stream); return utc ? <p className="mt-0.5 text-[10px] font-mono tabular-nums text-white/45">{utc}</p> : null; })()}
                     </div>
                     <StatusIndicators stream={stream} isHost={stream.user_id === session?.host_id} isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId} showSyncStatus={!isVod} />
@@ -1472,17 +1595,20 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
           {!isMobileLayout && viewMode === 'stage' && desktopPovStripLayout === 'horizontal' && visibleStreams.length > 0 && (
             <div className="rounded-2xl border border-pov-border bg-pov-surface p-3 shadow-[0_12px_40px_rgba(0,0,0,0.12)]">
               <div className="mb-2 flex items-center justify-between gap-3">
-                <span className="text-[10px] font-mono text-pov-muted uppercase tracking-wider">POVs</span>
+                <span className="text-[10px] font-mono text-pov-muted uppercase tracking-wider">
+                  POVs <span className="text-pov-muted/55 normal-case tracking-normal">{activeStreamCount}/{MAX_STREAMS_MVP}</span>
+                </span>
                 <span className="text-[10px] font-mono text-pov-muted/80">Horizontal strip</span>
               </div>
               <div className="flex gap-3 overflow-x-auto pb-1">
                 {visibleStreams.map((stream) => {
                   const isActive = stream.id === mainStreamId;
+                  const isFinished = !isVod && stream.is_active === false;
                   return (
                     <div key={`desktop-strip-${stream.id}`} className="w-[240px] shrink-0 flex flex-col gap-1">
-                      <motion.button type="button" layout whileHover={{ y: -1, scale: 1.01 }} whileTap={{ scale: 0.985 }} transition={{ type: 'spring', stiffness: 340, damping: 28 }}
-                        onClick={() => handleSwapStream(stream.id)}
-                        className={`group relative overflow-hidden rounded-xl border text-left ${isActive ? 'border-pov-accent/70 shadow-[0_8px_24px_rgba(108,92,231,0.18)]' : 'border-white/8 hover:border-white/18'} glass-card`}
+                      <motion.button type="button" layout whileHover={isFinished ? {} : { y: -1, scale: 1.01 }} whileTap={isFinished ? {} : { scale: 0.985 }} transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+                        onClick={isFinished && !isHost ? undefined : () => handleSwapStream(stream.id)}
+                        className={`group relative overflow-hidden rounded-xl border text-left ${isActive ? 'border-pov-accent/70 shadow-[0_8px_24px_rgba(108,92,231,0.18)]' : 'border-white/8 hover:border-white/18'} glass-card ${isFinished && !isHost ? 'cursor-default' : ''}`}
                       >
                         <div className="relative aspect-video overflow-hidden bg-black">
                           <div className="pointer-events-none absolute inset-0">
@@ -1494,13 +1620,21 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
                           {stream.is_anchor && (
                             <div className="absolute left-2 top-2 rounded-full border border-white/10 bg-black/35 px-1.5 py-0.5 text-[8px] font-mono uppercase tracking-wide text-white/80 backdrop-blur-md">Anchor</div>
                           )}
-                          {isActive && <div className="absolute inset-x-0 top-0 h-0.5 bg-pov-accent shadow-[0_0_18px_rgba(108,92,231,0.6)]" />}
+                          {isActive && !isFinished && <div className="absolute inset-x-0 top-0 h-0.5 bg-pov-accent shadow-[0_0_18px_rgba(108,92,231,0.6)]" />}
+                          {isFinished && (
+                            <FinishedStreamOverlay
+                              isHost={isHost}
+                              onReplay={() => handleReplayStream(stream.id)}
+                              onReplace={() => handleReplaceStream(stream.id)}
+                              onClear={() => handleClearStream(stream.id)}
+                            />
+                          )}
                         </div>
                         <div className="absolute inset-x-0 bottom-0 p-2 pointer-events-none">
                           <div className="glass-pill flex items-center justify-between gap-1.5 rounded-lg px-2 py-1.5">
                             <div className="min-w-0">
                               <p className="truncate text-[10px] font-semibold text-white">{stream.display_name}</p>
-                              <p className="text-[8px] font-mono uppercase tracking-wide text-white/55">{isActive ? 'On stage' : 'Click to focus'}</p>
+                              <p className="text-[8px] font-mono uppercase tracking-wide text-white/55">{isFinished ? 'Stream ended' : isActive ? 'On stage' : 'Click to focus'}</p>
                             </div>
                             <StatusIndicators stream={stream} isHost={stream.user_id === session?.host_id} isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId} showSyncStatus={!isVod} />
                           </div>
@@ -1620,14 +1754,17 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
       {/* ── Right sidebar: POV filmstrip (desktop, stage view) ─────────────── */}
       {!isMobileLayout && viewMode === 'stage' && desktopPovStripLayout === 'vertical' && visibleStreams.length > 0 && (
         <div className="shrink-0 flex flex-col gap-2 max-h-[calc(100vh-160px)] overflow-y-auto pr-1 scrollbar-thin" style={{ width: `${desktopSidebarWidth}px` }}>
-          <span className="text-[10px] font-mono text-pov-muted uppercase tracking-wider mb-1">POVs</span>
+          <span className="text-[10px] font-mono text-pov-muted uppercase tracking-wider mb-1">
+            POVs <span className="text-pov-muted/55 normal-case tracking-normal">{activeStreamCount}/{MAX_STREAMS_MVP}</span>
+          </span>
           {visibleStreams.map((stream) => {
             const isActive = stream.id === mainStreamId;
+            const isFinished = !isVod && stream.is_active === false;
             return (
               <div key={`side-wrap-${stream.id}`} className="flex flex-col gap-1">
-                <motion.button type="button" layout whileHover={{ y: -1, scale: 1.01 }} whileTap={{ scale: 0.985 }} transition={{ type: 'spring', stiffness: 340, damping: 28 }}
-                  onClick={() => handleSwapStream(stream.id)}
-                  className={`group relative overflow-hidden rounded-xl border text-left ${isActive ? 'border-pov-accent/70 shadow-[0_8px_24px_rgba(108,92,231,0.18)]' : 'border-white/8 hover:border-white/18'} glass-card`}
+                <motion.button type="button" layout whileHover={isFinished ? {} : { y: -1, scale: 1.01 }} whileTap={isFinished ? {} : { scale: 0.985 }} transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+                  onClick={isFinished && !isHost ? undefined : () => handleSwapStream(stream.id)}
+                  className={`group relative overflow-hidden rounded-xl border text-left ${isActive ? 'border-pov-accent/70 shadow-[0_8px_24px_rgba(108,92,231,0.18)]' : 'border-white/8 hover:border-white/18'} glass-card ${isFinished && !isHost ? 'cursor-default' : ''}`}
                 >
                   <div className="relative aspect-video overflow-hidden bg-black">
                     <div className="pointer-events-none absolute inset-0">
@@ -1639,13 +1776,21 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
                     {stream.is_anchor && (
                       <div className="absolute left-2 top-2 rounded-full border border-white/10 bg-black/35 px-1.5 py-0.5 text-[8px] font-mono uppercase tracking-wide text-white/80 backdrop-blur-md">Anchor</div>
                     )}
-                    {isActive && <div className="absolute inset-x-0 top-0 h-0.5 bg-pov-accent shadow-[0_0_18px_rgba(108,92,231,0.6)]" />}
+                    {isActive && !isFinished && <div className="absolute inset-x-0 top-0 h-0.5 bg-pov-accent shadow-[0_0_18px_rgba(108,92,231,0.6)]" />}
+                    {isFinished && (
+                      <FinishedStreamOverlay
+                        isHost={isHost}
+                        onReplay={() => handleReplayStream(stream.id)}
+                        onReplace={() => handleReplaceStream(stream.id)}
+                        onClear={() => handleClearStream(stream.id)}
+                      />
+                    )}
                   </div>
                   <div className="absolute inset-x-0 bottom-0 p-2 pointer-events-none">
                     <div className="glass-pill flex items-center justify-between gap-1.5 rounded-lg px-2 py-1.5">
                       <div className="min-w-0">
                         <p className="truncate text-[10px] font-semibold text-white">{stream.display_name}</p>
-                        <p className="text-[8px] font-mono uppercase tracking-wide text-white/55">{isActive ? 'On stage' : 'Click to focus'}</p>
+                        <p className="text-[8px] font-mono uppercase tracking-wide text-white/55">{isFinished ? 'Stream ended' : isActive ? 'On stage' : 'Click to focus'}</p>
                       </div>
                       <StatusIndicators stream={stream} isHost={stream.user_id === session?.host_id} isControlDelegated={!!controlHolderUserId && stream.user_id === controlHolderUserId} showSyncStatus={!isVod} />
                     </div>
@@ -1711,6 +1856,8 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
         onDisplayNameChange={setAddPovDisplayName}
         onSubmit={handleAddPov}
         onCancel={closeAddPovModal}
+        title={replacingStreamId ? 'Replace POV' : 'Add another POV'}
+        submitLabel={replacingStreamId ? 'Replace POV' : undefined}
       />
 
       {/* ── Confirm / alert modal ─────────────────────────────────────────────── */}
