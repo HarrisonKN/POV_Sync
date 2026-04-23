@@ -261,7 +261,7 @@ Palette:
 - Spectator view is always read-only — no controls exposed
 - Only one person holds host control at a time
 - Offsets are always applied before any playback command fires
-- Maximum 5 streams for MVP, architecture supports 10
+- Maximum 10 streams per session
 - Session/spectator/share links never expire
 
 ---

@@ -43,7 +43,7 @@ export const OFFSET_STEPS = {
 };
 
 // Limits
-export const MAX_STREAMS_MVP = 5;
+export const MAX_STREAMS_MVP = 10;
 export const MAX_STREAMS_ARCH = 10;
 
 // Drift threshold in seconds — beyond this, auto-correction kicks in

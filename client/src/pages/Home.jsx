@@ -348,7 +348,7 @@ export default function Home() {
             {/* Right: Visual feature cards — visible on all screens */}
             <div className="grid grid-cols-2 gap-2 sm:gap-3 animate-in" style={{ animationDelay: '0.1s' }}>
               {[
-                { icon: 'POV', title: 'Multi-POV', desc: 'Up to 8 YouTube & Twitch streams synced' },
+                { icon: 'POV', title: 'Multi-POV', desc: 'Up to 10 YouTube & Twitch streams synced' },
                 { icon: 'LINK', title: 'One-Click Join', desc: 'Share a link, squad joins instantly' },
                 { icon: 'SYNC', title: 'Auto Sync', desc: 'UTC-based offset, zero-latency sync' },
                 { icon: 'GAME', title: 'Gaming First', desc: 'Built for competitive & co-op streams' },
@@ -633,7 +633,7 @@ export default function Home() {
           <div className="grid sm:grid-cols-3 gap-4">
             {[
               { icon: 'SYNC', title: 'Perfect Sync', desc: 'UTC-based sync keeps everyone on the same frame' },
-              { icon: 'TEAM', title: 'Squad Ready', desc: 'Up to 8 POVs in a single session, switch freely' },
+              { icon: 'TEAM', title: 'Squad Ready', desc: 'Up to 10 POVs in a single session, switch freely' },
               { icon: 'LOCK', title: 'Private Sessions', desc: 'Only people with your invite link can join' },
             ].map((f) => (
               <div key={f.title} className="bg-pov-surface border border-pov-border rounded-xl p-5 text-center">

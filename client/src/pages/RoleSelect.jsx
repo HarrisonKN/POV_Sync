@@ -3,6 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { useAuth } from '../hooks/useAuth';
 import ErrorState from '../components/ErrorState';
+import { MAX_STREAMS_MVP } from '../../../shared/constants.js';
 
 export default function RoleSelect() {
   const { code } = useParams();
@@ -64,7 +65,7 @@ export default function RoleSelect() {
   const hostStream = activeStreams.find((s) => s.user_id === session.host_id);
   const hostName = hostStream?.display_name ?? 'Host';
   const participantCount = activeStreams.length;
-  const isFull = participantCount >= 5;
+  const isFull = participantCount >= MAX_STREAMS_MVP;
 
   const displayName = profile?.display_name || user?.email?.split('@')[0] || null;
 
@@ -86,7 +87,7 @@ export default function RoleSelect() {
           session.participant_link
         ) {
           const active = (session.streams || []).filter((s) => s.is_active !== false);
-          if (active.length < 5) {
+          if (active.length < MAX_STREAMS_MVP) {
             localStorage.removeItem('povsync.joinIntent');
             setAutoForwarded(true);
             navigate(`/join/${session.participant_link}`, { replace: true });
@@ -203,7 +204,7 @@ export default function RoleSelect() {
             </p>
           ) : isFull ? (
             <p className="text-xs text-pov-muted leading-relaxed mb-4">
-              This session is full (5 participants max). Watch as a spectator instead.
+              This session is full ({MAX_STREAMS_MVP} participants max). Watch as a spectator instead.
             </p>
           ) : (
             <p className="text-xs text-pov-muted leading-relaxed mb-4">

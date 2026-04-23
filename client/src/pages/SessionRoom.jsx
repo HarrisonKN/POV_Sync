@@ -16,7 +16,7 @@ import StreamPlayer from '../components/StreamPlayer';
 import StatusIndicators from '../components/StatusIndicators';
 import ConfirmModal from '../components/ConfirmModal';
 import PlaybackControls from '../components/PlaybackControls';
-import { OFFSET_STEPS } from '../../../shared/constants.js';
+import { MAX_STREAMS_MVP, OFFSET_STEPS } from '../../../shared/constants.js';
 
 import InfoPill from '../components/session/InfoPill';
 import LinkRow from '../components/session/LinkRow';
@@ -205,7 +205,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
 
   // ── Derived display values ──────────────────────────────────────────────────
   const hasControl = isHost || (!!controlHolderUserId && user?.id === controlHolderUserId);
-  const canAddPov = isHost && !isVod && visibleStreams.length < 5;
+  const canAddPov = isHost && !isVod && visibleStreams.length < MAX_STREAMS_MVP;
   const nextPovLabel = `POV ${visibleStreams.length + 1}`;
   const hostStream = visibleStreams.find((s) => s.user_id === session?.host_id);
   const hostName = hostStream?.display_name ?? 'Host';
@@ -216,7 +216,8 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
   const desktopSidebarWidth = Math.round(320 - desktopFocusProgress * 110);
   const desktopStageViewportOffset = Math.round(390 - desktopFocusProgress * 90);
   const wallItemCount = visibleStreams.length + (canAddPov ? 1 : 0);
-  const wallColumnCount = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(Math.max(wallItemCount, 1)))));
+  const desktopWallMaxColumns = wallItemCount >= 9 ? 5 : 4;
+  const wallColumnCount = Math.min(desktopWallMaxColumns, Math.max(1, Math.ceil(Math.sqrt(Math.max(wallItemCount, 1)))));
   const wallGridMaxWidth = wallColumnCount * roomTileMinWidth + Math.max(0, wallColumnCount - 1) * 12;
   const filmstripTileWidth = Math.min(360, Math.max(180, Math.round(roomTileMinWidth * 0.58)));
   const effectiveWallColumnCount = isMobileLayout ? Math.min(2, Math.max(1, wallItemCount)) : wallColumnCount;
@@ -1618,7 +1619,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
                       className="inline-flex items-center gap-1.5 rounded-lg border border-pov-border bg-pov-bg px-2.5 py-1.5 text-[10px] font-mono text-pov-text transition-colors hover:bg-pov-border/30"
                       title={desktopPovStripLayout === 'vertical' ? 'Move POV frames into a horizontal strip below the main view' : 'Move POV frames into a vertical sidebar beside the main view'}
                     >
-                      <span>POVs {desktopPovStripLayout === 'vertical' ? 'Vertical' : 'Horizontal'}</span>
+                      <span>POVs {desktopPovStripLayout === 'vertical' ? 'Horizontal' : 'Vertical'}</span>
                     </button>
                   )}
                 </div>

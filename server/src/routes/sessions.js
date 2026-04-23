@@ -3,6 +3,7 @@ import { supabaseAdmin } from '../lib/supabase.js';
 import { requireAuth } from '../lib/supabaseAuth.js';
 import { createExpressRateLimit } from '../lib/rateLimit.js';
 import { generateLinkCode, detectPlatform } from '../../../shared/helpers.js';
+import { MAX_STREAMS_MVP } from '../../../shared/constants.js';
 import * as syncManager from '../services/syncManager.js';
 import { broadcastToSession, setControlDelegation } from '../websocket/index.js';
 import { fetchActualStartTime } from '../lib/youtubeApi.js';
@@ -246,8 +247,8 @@ router.post('/', requireAuth, createSessionRateLimit, async (req, res) => {
       }
     }
 
-    if (incomingStreams.length > 5) {
-      return res.status(400).json({ error: 'Session is full (max 5 streams for MVP)' });
+    if (incomingStreams.length > MAX_STREAMS_MVP) {
+      return res.status(400).json({ error: `Session is full (max ${MAX_STREAMS_MVP} streams)` });
     }
 
     const primaryStream = incomingStreams[0];
@@ -504,14 +505,15 @@ router.post('/:id/streams', requireAuth, streamJoinRateLimit, async (req, res) =
       return res.status(404).json({ error: 'Live session not found' });
     }
 
-    // Check stream count
+    // Check active stream count only — inactive/dropped streams must not permanently eat slots
     const { count } = await supabaseAdmin
       .from('streams')
       .select('*', { count: 'exact', head: true })
-      .eq('session_id', id);
+      .eq('session_id', id)
+      .neq('is_active', false);
 
-    if ((count ?? 0) + incomingStreams.length > 5) {
-      return res.status(400).json({ error: 'Session is full (max 5 streams for MVP)' });
+    if ((count ?? 0) + incomingStreams.length > MAX_STREAMS_MVP) {
+      return res.status(400).json({ error: `Session is full (max ${MAX_STREAMS_MVP} streams)` });
     }
 
     const nextPovIndex = (count ?? 0) + 1;

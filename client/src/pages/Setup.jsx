@@ -307,7 +307,7 @@ export default function Setup() {
           <Step n="5">Click <strong>Join Session</strong>. Your POV should appear in the room within a few seconds.</Step>
         </Steps>
         <Note>
-          Up to 5 participants can join one live room. If you leave the page, use the green <strong>"Return to Session"</strong> pill or the session resume card to jump back in.
+          Up to 10 participants can join one live room. If you leave the page, use the green <strong>"Return to Session"</strong> pill or the session resume card to jump back in.
         </Note>
       </Section>
 

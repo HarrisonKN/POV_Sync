@@ -7,6 +7,7 @@ import ErrorState from '../components/ErrorState';
 import SessionResumeCard from '../components/SessionResumeCard';
 import SessionRoomHeader from '../components/SessionRoomHeader';
 import JoinSkeleton from '../components/JoinSkeleton';
+import { MAX_STREAMS_MVP } from '../../../shared/constants.js';
 
 // Extract a bare join code from either a raw code or a full participant URL
 function parseJoinCode(input) {
@@ -309,7 +310,7 @@ export default function JoinSession() {
               </p>
             </div>
             <span className="hidden sm:inline-flex text-[10px] font-mono text-pov-muted bg-pov-bg border border-pov-border rounded-full px-3 py-1">
-              5 participant max
+              {MAX_STREAMS_MVP} participant max
             </span>
           </div>
 
@@ -317,7 +318,7 @@ export default function JoinSession() {
           {activeStreams.length > 0 && (
             <div className="mb-6">
               <h2 className="text-xs font-mono text-pov-muted mb-2 uppercase tracking-wider">
-                Already joined ({activeStreams.length}/5)
+                Already joined ({activeStreams.length}/{MAX_STREAMS_MVP})
               </h2>
               <div className="space-y-1">
                 {activeStreams.map((s) => (

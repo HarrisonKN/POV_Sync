@@ -107,7 +107,7 @@ When another user views someone's profile and clicks a VOD, that person's POV lo
 - YouTube `getVideoStartTime()` is used for automatic offset calculation
 
 ### Stream Limit
-- MVP: up to 5 streams per session
+- MVP: up to 10 streams per session
 - Architecture supports expansion to 10
 
 ---
@@ -530,7 +530,7 @@ UptimeRobot pings the health endpoint (`/api/health`) every 5 minutes to prevent
 
 - Mobile-native app
 - Clip creation
-- More than 5 streams per session
+- More than 10 streams per session
 - Monetisation
 - Recording through the viewer
 - Server-side audio fingerprinting (FFT cross-correlation) — replaced by YouTube start time sync
