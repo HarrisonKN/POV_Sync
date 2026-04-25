@@ -14,6 +14,7 @@ export default function RoleSelect() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [autoForwarded, setAutoForwarded] = useState(false);
 
   useEffect(() => {
     async function fetchSession() {
@@ -30,6 +31,33 @@ export default function RoleSelect() {
     }
     if (code) fetchSession();
   }, [code]);
+
+  // Auto-forward: if the user just signed in to join this session, redirect
+  // them straight to the join page. The intent is saved in localStorage by
+  // joinAsParticipant() before the OAuth redirect.
+  useEffect(() => {
+    if (autoForwarded || !user || !session) return;
+    try {
+      const savedIntent = localStorage.getItem('povsync.joinIntent');
+      if (savedIntent) {
+        const intent = JSON.parse(savedIntent);
+        if (
+          intent.shareCode === code &&
+          Date.now() - intent.ts < 10 * 60 * 1000 &&
+          session.status === 'live' &&
+          session.participant_link
+        ) {
+          const active = (session.streams || []).filter((s) => s.is_active !== false);
+          if (active.length < MAX_STREAMS_MVP) {
+            localStorage.removeItem('povsync.joinIntent');
+            setAutoForwarded(true);
+            navigate(`/join/${session.participant_link}`, { replace: true });
+            return;
+          }
+        }
+      }
+    } catch (_) {}
+  }, [user, session, autoForwarded, navigate, code]);
 
   if (loading) {
     return (
@@ -68,35 +96,6 @@ export default function RoleSelect() {
   const isFull = participantCount >= MAX_STREAMS_MVP;
 
   const displayName = profile?.display_name || user?.email?.split('@')[0] || null;
-
-  // Auto-forward: if the user just signed in to join this session, redirect
-  // them straight to the join page.  The intent is saved in localStorage
-  // by joinAsParticipant() before the OAuth redirect.
-  const [autoForwarded, setAutoForwarded] = useState(false);
-  useEffect(() => {
-    if (autoForwarded || !user || !session) return;
-    try {
-      const savedIntent = localStorage.getItem('povsync.joinIntent');
-      if (savedIntent) {
-        const intent = JSON.parse(savedIntent);
-        // Only auto-forward if the intent matches THIS room and is recent (< 10 min)
-        if (
-          intent.shareCode === code &&
-          Date.now() - intent.ts < 10 * 60 * 1000 &&
-          session.status === 'live' &&
-          session.participant_link
-        ) {
-          const active = (session.streams || []).filter((s) => s.is_active !== false);
-          if (active.length < MAX_STREAMS_MVP) {
-            localStorage.removeItem('povsync.joinIntent');
-            setAutoForwarded(true);
-            navigate(`/join/${session.participant_link}`, { replace: true });
-            return;
-          }
-        }
-      }
-    } catch (_) {}
-  }, [user, session, autoForwarded, navigate, code]);
 
   function joinAsSpectator() {
     navigate(`/watch/${session.spectator_link}`);
