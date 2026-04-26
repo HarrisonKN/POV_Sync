@@ -3,7 +3,7 @@
  * All UI/playback logic lives in SessionRoom.
  */
 import { useState, useEffect } from 'react';
-import { useParams, useLocation } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../lib/supabase';
 import SessionRoom from './SessionRoom';
@@ -12,7 +12,6 @@ import ErrorState from '../components/ErrorState';
 
 export default function Viewer() {
   const { sessionId } = useParams();
-  const location = useLocation();
   const { user } = useAuth();
 
   const [session, setSession] = useState(null);
@@ -99,6 +98,7 @@ export default function Viewer() {
       session={session}
       streams={streams}
       onStreamsChange={setStreams}
+      onSessionEnded={(endedAt) => setSession((prev) => prev ? { ...prev, status: 'ended', ended_at: endedAt || prev.ended_at, vod_ready_at: endedAt || prev.vod_ready_at } : prev)}
     />
   );
 }

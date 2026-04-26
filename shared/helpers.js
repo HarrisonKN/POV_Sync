@@ -15,6 +15,10 @@ export function extractYouTubeVideoId(url) {
     /(?:youtube\.com\/live\/)([a-zA-Z0-9_-]{11})/,
     // youtube.com/embed/VIDEO_ID
     /(?:youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
+    // youtube.com/shorts/VIDEO_ID  (mobile shorts URLs)
+    /(?:youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/,
+    // youtube.com/v/VIDEO_ID  (legacy embed)
+    /(?:youtube\.com\/v\/)([a-zA-Z0-9_-]{11})/,
   ];
 
   for (const pattern of patterns) {
@@ -45,6 +49,9 @@ export function extractTwitchChannel(url) {
     'directory', 'videos', 'settings', 'subscriptions', 'inventory',
     'wallet', 'friends', 'downloads', 'prime', 'turbo', 'products',
     'p', 'jobs', 'about', 'legal', 'privacy', 'terms',
+    // Player/embed/utility paths that come before a channel name
+    'popout', 'embed', 'team', 'following', 'moderator', 'search',
+    'oauth2', 'signup', 'login', 'bits', 'creatorcamp', 'broadcast',
   ]);
 
   for (const pattern of patterns) {

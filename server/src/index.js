@@ -136,7 +136,7 @@ app.get('/watch/:code', async (req, res, next) => {
       ? `Watch ${streamNames} in multi-POV sync`
       : `A ${session.status === 'live' ? 'live' : 'saved'} multi-POV session on POV Sync`;
 
-    const escHtml = (s) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;');
+    const escHtml = (s) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
     let html = fs.readFileSync(htmlPath, 'utf-8');
     const metaTags = [
@@ -183,7 +183,7 @@ app.get('/room/:code', async (req, res, next) => {
       ? `Join ${activeNames} watching in multi-POV sync`
       : `A ${session.status === 'live' ? 'live' : 'saved'} multi-POV session on POV Sync`;
 
-    const escHtml = (s) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;');
+    const escHtml = (s) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
     let html = fs.readFileSync(htmlPath, 'utf-8');
     const metaTags = [

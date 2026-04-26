@@ -1,12 +1,21 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 
 export default function LinkRow({ label, url }) {
   const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
 
-  function handleCopy() {
-    navigator.clipboard.writeText(url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  async function handleCopy() {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard API unavailable');
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setFailed(false);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.warn('[LinkRow] Clipboard write failed:', err);
+      setFailed(true);
+      setTimeout(() => setFailed(false), 2500);
+    }
   }
 
   return (
@@ -20,10 +29,12 @@ export default function LinkRow({ label, url }) {
         className={`text-[10px] sm:text-xs font-mono border rounded px-2 sm:px-3 py-1.5 transition-all flex-shrink-0 ${
           copied
             ? 'border-pov-success/50 text-pov-success bg-pov-success/10'
-            : 'border-pov-border text-pov-muted hover:text-pov-text hover:border-pov-muted'
+            : failed
+              ? 'border-pov-danger/50 text-pov-danger bg-pov-danger/10'
+              : 'border-pov-border text-pov-muted hover:text-pov-text hover:border-pov-muted'
         }`}
       >
-        {copied ? 'Copied' : 'Copy'}
+        {copied ? 'Copied' : failed ? 'Copy failed' : 'Copy'}
       </button>
     </div>
   );

@@ -47,7 +47,7 @@ const VIEW_MODE_OPTIONS = [
   // { id: 'cycle', label: 'Cycle view', shortLabel: 'Cycle' },  // TODO: re-enable after custom fullscreen rework
 ];
 
-export default function SessionRoom({ role, session, streams, onStreamsChange }) {
+export default function SessionRoom({ role, session, streams, onStreamsChange, onSessionEnded }) {
   const navigate = useNavigate();
   const { user, getAccessToken } = useAuth();
 
@@ -395,6 +395,8 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
             onStreamsChange?.((prev) => prev.map((s) => s.id === msg.streamId ? { ...s, is_active: false } : s));
           } else if (msg.type === 'STREAM_UPDATED') {
             onStreamsChange?.((prev) => prev.map((s) => s.id === msg.stream?.id ? { ...s, ...msg.stream } : s));
+          } else if (msg.type === 'SESSION_ENDED') {
+            onSessionEnded?.(msg.endedAt);
           }
         } catch (err) {
           console.error('[WS] Failed to parse message:', err);
@@ -420,7 +422,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
       if (ws?.readyState === WebSocket.OPEN) ws.close();
       if (wsRef.current === ws) wsRef.current = null;
     };
-  }, [isSpectator, sessionId, getAccessToken, session?.status, ending, onStreamsChange]);
+  }, [isSpectator, sessionId, getAccessToken, session?.status, ending, onStreamsChange, onSessionEnded]);
 
   // ── WebSocket — spectator (unauthenticated, read-only) ─────────────────────
   useEffect(() => {
@@ -448,6 +450,8 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
             onStreamsChange?.((prev) => prev.map((s) => s.id === msg.streamId ? { ...s, is_active: false } : s));
           } else if (msg.type === 'STREAM_UPDATED') {
             onStreamsChange?.((prev) => prev.map((s) => s.id === msg.stream?.id ? { ...s, ...msg.stream } : s));
+          } else if (msg.type === 'SESSION_ENDED') {
+            onSessionEnded?.(msg.endedAt);
           }
         } catch (err) {
           console.error('[WS] Spectator message parse error:', err);
@@ -470,7 +474,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
       if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.close();
       wsRef.current = null;
     };
-  }, [isSpectator, sessionId, onStreamsChange]);
+  }, [isSpectator, sessionId, onStreamsChange, onSessionEnded]);
 
   // ── Register new streams with WS as they arrive ────────────────────────────
   useEffect(() => {
@@ -1169,9 +1173,8 @@ export default function SessionRoom({ role, session, streams, onStreamsChange })
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         });
         if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Failed to end session'); }
-        const endedAt = new Date().toISOString();
-        // Notify parent — parent updates session state via Supabase realtime normally,
-        // but we also patch locally for immediate UI update.
+        // Server now broadcasts SESSION_ENDED via WS so participants/spectators
+        // flip to VOD instantly. We also close our own socket here.
         if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.close(1000, 'session ended');
       } catch (err) {
         setModal({ title: 'Error', message: err.message, variant: 'alert', confirmLabel: 'OK' });

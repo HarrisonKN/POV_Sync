@@ -9,10 +9,13 @@ import SessionRoomHeader from '../components/SessionRoomHeader';
 import JoinSkeleton from '../components/JoinSkeleton';
 import { MAX_STREAMS_MVP } from '../../../shared/constants.js';
 
-// Extract a bare join code from either a raw code or a full participant URL
+// Extract a bare join code from either a raw code or a full participant URL.
+// Also handles /room/<code> (universal share link) and /watch/<code> (spectator),
+// which the user might paste by mistake — we extract the code so the rest of
+// the flow can resolve the right destination.
 function parseJoinCode(input) {
   const trimmed = input.trim();
-  const match = trimmed.match(/\/join\/([^/?#]+)/);
+  const match = trimmed.match(/\/(?:join|room|watch)\/([^/?#\s]+)/i);
   if (match) return match[1];
   return trimmed;
 }
@@ -62,7 +65,6 @@ export default function JoinSession() {
   // Realtime: watch for new streams joining while on this page
   useEffect(() => {
     if (!code || !session?.id) return;
-    if (!session?.id) return;
 
     const channel = supabase
       .channel(`join-${session.id}`)
@@ -120,6 +122,9 @@ export default function JoinSession() {
 
     setSubmitting(true);
     try {
+      const fallbackName = profile?.display_name
+        || (user.email ? user.email.split('@')[0] : null)
+        || 'Guest';
       const token = await getAccessToken();
       const res = await fetch(`/api/sessions/${session.id}/streams`, {
         method: 'POST',
@@ -130,7 +135,7 @@ export default function JoinSession() {
         body: JSON.stringify({
           userId: user.id,
           youtubeUrl: youtubeUrl.trim(),
-          displayName: displayName || profile?.display_name || user.email,
+          displayName: displayName || fallbackName,
         }),
       });
 
@@ -242,12 +247,12 @@ export default function JoinSession() {
     );
   }
 
-  if (activeStreams.length >= 5 && !alreadyJoined) {
+  if (activeStreams.length >= MAX_STREAMS_MVP && !alreadyJoined) {
     return (
       <ErrorState
         icon="Full"
         title="Session is full"
-        message="This session already has 5 participants, the maximum allowed."
+        message={`This session already has ${MAX_STREAMS_MVP} participants, the maximum allowed.`}
         helper="You can still join as a spectator, or ask the host to remove a participant before trying again."
         secondary={{ label: '← Home', to: '/' }}
       />

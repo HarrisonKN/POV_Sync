@@ -84,6 +84,13 @@ async function finalizeSessionEnd(sessionId) {
 
   syncManager.stopSession(sessionId);
 
+  // Notify all connected clients immediately (don't wait for Supabase realtime)
+  try {
+    broadcastToSession(sessionId, { type: 'SESSION_ENDED', sessionId, endedAt: nowIso });
+  } catch (err) {
+    console.error('[API] Failed to broadcast SESSION_ENDED:', err);
+  }
+
   return { endedAt: nowIso, streamCount: allStreams?.length ?? 0 };
 }
 
@@ -1106,9 +1113,18 @@ router.patch('/:id/streams/:streamId/url', requireAuth, sessionMutationRateLimit
 
     const url = String(youtubeUrl).trim();
     const platform = detectPlatform(url);
-    if (platform === 'unknown') return res.status(400).json({ error: 'Invalid stream URL. Provide a YouTube or Twitch link.' });
+    if (!platform) return res.status(400).json({ error: 'Invalid stream URL. Provide a YouTube or Twitch link.' });
 
-    const updates = { youtube_url: url, platform, is_active: true, left_at: null };
+    // Replacing the URL invalidates the previous video's start time and any
+    // computed offset. Reset both so sync re-derives them from the new video.
+    const updates = {
+      youtube_url: url,
+      platform,
+      is_active: true,
+      left_at: null,
+      youtube_start_time: null,
+      offset_seconds: 0,
+    };
     if (displayName) updates.display_name = String(displayName).trim().slice(0, 40);
 
     const { data: updatedStream, error: updateError } = await supabaseAdmin
@@ -1121,8 +1137,19 @@ router.patch('/:id/streams/:streamId/url', requireAuth, sessionMutationRateLimit
 
     if (updateError) throw updateError;
 
+    // Purge any cached start time for this stream in the in-memory sync manager,
+    // then re-add it with the new URL so the next start-time report wins.
+    syncManager.removeStream(id, streamId);
     syncManager.addStream(id, streamId, url, false);
     broadcastToSession(id, { type: 'STREAM_UPDATED', stream: updatedStream });
+
+    // Re-fetch authoritative start time from the YouTube API in the background.
+    fetchActualStartTime(url).then((ytStartTime) => {
+      if (!ytStartTime) return;
+      supabaseAdmin.from('streams').update({ youtube_start_time: ytStartTime }).eq('id', streamId).then(() => {
+        syncManager.reportStartTime(id, streamId, ytStartTime);
+      });
+    }).catch(() => {});
 
     res.json({ success: true, stream: updatedStream });
   } catch (err) {

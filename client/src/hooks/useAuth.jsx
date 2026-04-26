@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useRef } from 'react';
+import { createContext, useContext, useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 
 const AuthContext = createContext(null);
@@ -101,9 +101,11 @@ export function AuthProvider({ children }) {
     if (error) console.error('Sign-out error:', error);
     setUser(null);
     setProfile(null);
+    setAccessToken(null);
+    profileFetchedRef.current = null;
   }
 
-  async function getAccessToken() {
+  const getAccessToken = useCallback(async () => {
     // First try the cached token (avoids hanging getSession calls)
     if (accessToken) return accessToken;
     // Fallback: try getSession with a timeout
@@ -119,16 +121,16 @@ export function AuthProvider({ children }) {
       console.error('[Auth] getAccessToken failed:', err);
       return null;
     }
-  }
+  }, [accessToken]);
 
-  const value = {
+  const value = useMemo(() => ({
     user,
     profile,
     loading,
     signInWithGoogle,
     signOut,
     getAccessToken,
-  };
+  }), [user, profile, loading, getAccessToken]);
 
   return (
     <AuthContext.Provider value={value}>

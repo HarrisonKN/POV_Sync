@@ -141,6 +141,12 @@ export function setupWebSocket(server) {
       }, 10_000);
 
       const authenticateParticipant = async (token) => {
+        // Guard against concurrent invocations (e.g. legacy ?token= URL param +
+        // first-message AUTH both arriving). Without this, two getUser() calls
+        // race and both can pass membership checks, double-incrementing
+        // connectionCounts and double-sending AUTH_OK.
+        if (ws._authStarted) return;
+        ws._authStarted = true;
         try {
           const userClient = createUserClient(token);
           const { data, error } = await userClient.auth.getUser(token);

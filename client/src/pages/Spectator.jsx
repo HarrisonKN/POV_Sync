@@ -3,7 +3,7 @@
  * All UI/playback logic lives in SessionRoom.
  */
 import { useState, useEffect } from 'react';
-import { useParams, useLocation } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import SessionRoom from './SessionRoom';
 import SessionSkeleton from '../components/SessionSkeleton';
@@ -83,6 +83,7 @@ export default function Spectator() {
       session={session}
       streams={streams}
       onStreamsChange={setStreams}
+      onSessionEnded={(endedAt) => setSession((prev) => prev ? { ...prev, status: 'ended', ended_at: endedAt || prev.ended_at, vod_ready_at: endedAt || prev.vod_ready_at } : prev)}
     />
   );
 }

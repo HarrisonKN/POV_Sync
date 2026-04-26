@@ -19,7 +19,7 @@ import {
 
 function parseJoinCode(input) {
   const trimmed = input.trim();
-  const match = trimmed.match(/\/join\/([^/?#]+)/);
+  const match = trimmed.match(/\/(?:join|room|watch)\/([^/?#\s]+)/i);
   if (match) return match[1];
   return trimmed;
 }
@@ -248,7 +248,7 @@ export default function Home() {
         },
         body: JSON.stringify({
           youtubeUrl: youtubeUrl.trim(),
-          displayName: profile?.display_name || user.email,
+          displayName: profile?.display_name || (user.email ? user.email.split('@')[0] : null) || 'Guest',
           ...(sessionTitle.trim() && { title: sessionTitle.trim() }),
         }),
       });

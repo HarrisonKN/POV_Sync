@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { useAuth } from '../hooks/useAuth';
 import ErrorState from '../components/ErrorState';
@@ -9,7 +9,6 @@ export default function RoleSelect() {
   const { code } = useParams();
   const navigate = useNavigate();
   const { user, profile, signInWithGoogle } = useAuth();
-  const location = useLocation();
 
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
