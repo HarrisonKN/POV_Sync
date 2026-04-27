@@ -991,18 +991,71 @@ export default function SessionRoom({ role, session, streams, onStreamsChange, o
     syncingRef.current = true;
     lastSeekTs.current = Date.now();
     anchorProgrammaticSeekTs.current = Date.now(); // suppress BUFFERING feedback from our own seek
+
+    // Each broadcast runs in real time on its own platform, so the "most live"
+    // position for any stream is its own live edge — NOT (anchor live edge -
+    // anchor-relative offset). The previous version subtracted the anchor
+    // offset from each player's getDuration(), which left non-anchor streams
+    // behind their own live edges by `offset` seconds.
+    //
+    // Strategy:
+    //   1. Seek every YouTube player to its own getDuration() (live edge).
+    //   2. For Twitch, calling play() auto-tracks the live edge.
+    //   3. Refresh UTC-derived offsets so the 8-second drift-correction
+    //      interval keeps everyone at wall-clock now (i.e. each stream's
+    //      own live edge), instead of yanking them back to a stale offset.
+
+    const anchor = streamsRef.current.find((s) => s.is_anchor);
+    const anchorStartTime = anchor
+      ? (localStartTimesRef.current[anchor.id] ?? anchor.youtube_start_time)
+      : null;
+    const haveUtc = Number.isFinite(anchorStartTime) && anchorStartTime > 0;
+    const utcOffsets = {};
+
     streamsRef.current.forEach((stream) => {
       const stage = playerRefs.current[stream.id];
       const film = playerRefs.current[`film-${stream.id}`];
-      const offset = offsetsRef.current[stream.id] ?? 0;
       try {
-        const dur = stage?.getDuration?.() ?? film?.getDuration?.() ?? 0;
-        const liveEdge = dur > 0 ? dur : 9999999;
-        const target = Math.max(0, liveEdge - offset);
-        stage?.seekTo(target, true); film?.seekTo(target, true);
+        // Twitch's seek() is a no-op on live; play() resumes at the live edge.
+        const isTwitch = stage?._isTwitch || film?._isTwitch;
+        if (isTwitch) {
+          try { stage?.playVideo?.(); } catch (_) {}
+          try { film?.playVideo?.(); } catch (_) {}
+        } else {
+          // YouTube: seek to each player's own getDuration() = its live edge.
+          // YouTube clamps any value past the live edge, so a large fallback
+          // also works if getDuration() returns 0 (e.g. iframe still loading).
+          const stageDur = stage?.getDuration?.() ?? 0;
+          const filmDur = film?.getDuration?.() ?? 0;
+          if (stage) {
+            const target = stageDur > 0 ? stageDur : 9999999;
+            stage.seekTo(target, true);
+            try { stage.playVideo?.(); } catch (_) {}
+          }
+          if (film) {
+            const target = filmDur > 0 ? filmDur : 9999999;
+            film.seekTo(target, true);
+            try { film.playVideo?.(); } catch (_) {}
+          }
+        }
       } catch (_) {}
+
+      // Compute UTC-derived offset so drift correction stays at live.
+      if (haveUtc) {
+        const streamStartTime = localStartTimesRef.current[stream.id] ?? stream.youtube_start_time;
+        if (Number.isFinite(streamStartTime) && streamStartTime > 0) {
+          utcOffsets[stream.id] = Math.round((streamStartTime - anchorStartTime) * 100) / 100;
+        }
+      }
     });
+
+    if (Object.keys(utcOffsets).length > 0) {
+      setOffsets((prev) => ({ ...prev, ...utcOffsets }));
+    }
+
+    isPlayingRef.current = true;
     syncingRef.current = false;
+    console.log(`[GoLive] Seeked ${streamsRef.current.length} streams to their own live edges${haveUtc ? ' + refreshed UTC offsets' : ''}`);
   }, []);
 
   const handleResync = useCallback(() => {
@@ -1087,14 +1140,27 @@ export default function SessionRoom({ role, session, streams, onStreamsChange, o
     if (!mainStreamId) return;
     const stage = playerRefs.current[mainStreamId];
     const film = playerRefs.current[`film-${mainStreamId}`];
-    const offset = offsetsRef.current[mainStreamId] ?? 0;
     syncingRef.current = true; lastSeekTs.current = Date.now();
     if (!isSpectator) localOverrideStreamIdRef.current = mainStreamId;
     try {
-      const dur = stage?.getDuration?.() ?? film?.getDuration?.() ?? 0;
-      const liveEdge = dur > 0 ? dur : 9999999;
-      const target = Math.max(0, liveEdge - offset);
-      stage?.seekTo?.(target, true); film?.seekTo?.(target, true);
+      // Seek THIS stream to its own live edge — don't subtract an anchor offset.
+      // For Twitch live, seek is a no-op; play() resumes at the live edge.
+      const isTwitch = stage?._isTwitch || film?._isTwitch;
+      if (isTwitch) {
+        try { stage?.playVideo?.(); } catch (_) {}
+        try { film?.playVideo?.(); } catch (_) {}
+      } else {
+        const stageDur = stage?.getDuration?.() ?? 0;
+        const filmDur = film?.getDuration?.() ?? 0;
+        if (stage) {
+          stage.seekTo(stageDur > 0 ? stageDur : 9999999, true);
+          try { stage.playVideo?.(); } catch (_) {}
+        }
+        if (film) {
+          film.seekTo(filmDur > 0 ? filmDur : 9999999, true);
+          try { film.playVideo?.(); } catch (_) {}
+        }
+      }
     } catch (_) {}
     syncingRef.current = false;
   }, [isSpectator, mainStreamId]);
