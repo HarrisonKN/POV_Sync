@@ -24,16 +24,17 @@ function sanitizeSingleLine(value, maxLength) {
     .slice(0, maxLength);
 }
 
-function sanitizeMultiline(value, maxLength) {
-  return String(value ?? '')
+function sanitizeMultiline(value, maxLength, { trimEdges = false } = {}) {
+  const sanitized = String(value ?? '')
     .normalize('NFKC')
     .replace(/[<>]/g, '')
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
-    .trim()
     .slice(0, maxLength);
+
+  return trimEdges ? sanitized.trim() : sanitized;
 }
 
 export default function FeedbackModal({ open, onClose, user, profile, pagePath, getAccessToken }) {
@@ -80,12 +81,12 @@ export default function FeedbackModal({ open, onClose, user, profile, pagePath, 
     return () => window.clearInterval(timer);
   }, [open, submitted]);
 
-  const sanitizedMessage = useMemo(() => sanitizeMultiline(message, MAX_MESSAGE_LENGTH), [message]);
+  const sanitizedMessage = useMemo(() => sanitizeMultiline(message, MAX_MESSAGE_LENGTH, { trimEdges: true }), [message]);
   const canSubmit = useMemo(() => sanitizedMessage.length >= 10 && !submitting && cooldownRemainingMs <= 0, [sanitizedMessage, submitting, cooldownRemainingMs]);
 
   async function handleSubmit(event) {
     event.preventDefault();
-    const trimmedMessage = sanitizeMultiline(message, MAX_MESSAGE_LENGTH);
+    const trimmedMessage = sanitizeMultiline(message, MAX_MESSAGE_LENGTH, { trimEdges: true });
     const trimmedEmail = sanitizeSingleLine(email, MAX_EMAIL_LENGTH).toLowerCase();
     const trimmedDisplayName = sanitizeSingleLine(displayName, MAX_DISPLAY_NAME_LENGTH);
     const trimmedPagePath = sanitizeSingleLine(pagePath || window.location.pathname, MAX_PAGE_PATH_LENGTH);

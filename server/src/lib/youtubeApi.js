@@ -45,6 +45,21 @@ export function extractVideoId(url) {
  *   - The API request fails
  */
 export async function fetchActualStartTime(youtubeUrl) {
+  const details = await fetchLiveStreamingDetails(youtubeUrl);
+  return details?.actualStartTime ?? null;
+}
+
+/**
+ * Fetch full liveStreamingDetails for a YouTube video.
+ * Returns { actualStartTime, actualEndTime } where each value is unix epoch
+ * seconds or null. Returns null if API key is missing, the video isn't a
+ * livestream, or the request fails.
+ *
+ * Used by /auto-inactive to verify a host-reported "stream ended" against
+ * YouTube's authoritative state — prevents transient embed errors from
+ * archiving a still-live broadcast.
+ */
+export async function fetchLiveStreamingDetails(youtubeUrl) {
   const apiKey = process.env.YOUTUBE_API_KEY;
   if (!apiKey) return null;
 
@@ -59,23 +74,22 @@ export async function fetchActualStartTime(youtubeUrl) {
       return null;
     }
     const data = await res.json();
-    const item = data?.items?.[0];
-    if (!item) {
-      console.warn(`[YouTubeAPI] No item found for videoId=${videoId}`);
-      return null;
-    }
-    const iso = item.liveStreamingDetails?.actualStartTime;
-    if (!iso) {
-      // Not a livestream / hasn't started yet
-      return null;
-    }
-    const epochMs = Date.parse(iso);
-    if (!Number.isFinite(epochMs) || epochMs <= 0) return null;
-    const epochS = Math.floor(epochMs / 1000);
-    console.log(`[YouTubeAPI] actualStartTime for ${videoId}: ${iso} (${epochS})`);
-    return epochS;
+    const details = data?.items?.[0]?.liveStreamingDetails;
+    if (!details) return null;
+
+    const toEpoch = (iso) => {
+      if (!iso) return null;
+      const ms = Date.parse(iso);
+      if (!Number.isFinite(ms) || ms <= 0) return null;
+      return Math.floor(ms / 1000);
+    };
+
+    return {
+      actualStartTime: toEpoch(details.actualStartTime),
+      actualEndTime: toEpoch(details.actualEndTime),
+    };
   } catch (err) {
-    console.warn(`[YouTubeAPI] Failed to fetch start time for ${videoId}:`, err.message);
+    console.warn(`[YouTubeAPI] Failed to fetch liveStreamingDetails for ${videoId}:`, err.message);
     return null;
   }
 }

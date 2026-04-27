@@ -6,7 +6,7 @@ import { generateLinkCode, detectPlatform } from '../../../shared/helpers.js';
 import { MAX_STREAMS_MVP } from '../../../shared/constants.js';
 import * as syncManager from '../services/syncManager.js';
 import { broadcastToSession, setControlDelegation } from '../websocket/index.js';
-import { fetchActualStartTime } from '../lib/youtubeApi.js';
+import { fetchActualStartTime, fetchLiveStreamingDetails } from '../lib/youtubeApi.js';
 
 const router = Router();
 
@@ -839,7 +839,7 @@ router.post('/:id/streams/:streamId/auto-inactive', requireAuth, sessionMutation
 
     const { data: stream, error: streamError } = await supabaseAdmin
       .from('streams')
-      .select('id, user_id, is_active')
+      .select('id, user_id, is_active, platform, youtube_url')
       .eq('id', streamId)
       .eq('session_id', id)
       .single();
@@ -852,6 +852,30 @@ router.post('/:id/streams/:streamId/auto-inactive', requireAuth, sessionMutation
     const isOwner = authUser?.id === stream.user_id;
     if (!isHost && !isOwner) {
       return res.status(403).json({ error: 'Only the stream owner or host can auto-archive this stream' });
+    }
+
+    // When the HOST (not the stream owner) reports a stream inactive, they
+    // can only know via their local iframe — which can fire transient ENDED
+    // on ad breaks / network blips. Verify against YouTube's authoritative
+    // state before archiving. Owner-initiated reports skip this check (the
+    // owner has direct knowledge of their own broadcast).
+    if (isHost && !isOwner && stream.platform === 'youtube' && stream.youtube_url) {
+      try {
+        const details = await fetchLiveStreamingDetails(stream.youtube_url);
+        // details === null means: no API key, not a livestream, or API failed.
+        // In those cases we proceed (current behaviour). Only refuse when we
+        // have authoritative data saying the broadcast is still live.
+        if (details && details.actualStartTime && !details.actualEndTime) {
+          console.log(`[API] Refusing host-initiated archive for stream ${streamId.slice(0,8)} — YouTube reports broadcast still live`);
+          return res.status(409).json({
+            error: 'Stream is still broadcasting on YouTube',
+            stillLive: true,
+          });
+        }
+      } catch (err) {
+        // Verification failed — don't block on API issues. Proceed conservatively.
+        console.warn(`[API] YouTube verification failed for stream ${streamId.slice(0,8)}:`, err.message);
+      }
     }
 
     const result = await archiveStreamAndMaybeFinalizeSession(id, streamId);

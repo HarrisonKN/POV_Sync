@@ -636,28 +636,88 @@ export default function SessionRoom({ role, session, streams, onStreamsChange, o
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Player callbacks ────────────────────────────────────────────────────────
+  // How long to wait after a player fires ENDED/ERROR before we actually archive
+  // the stream on the server. YouTube's IFrame API fires transient ENDED on ad
+  // transitions / network blips, and Twitch fires "ENDED" during reconnects.
+  // We re-check the player after the delay; if it has recovered (PLAYING, or
+  // currentTime has advanced) we cancel the report.
+  const INACTIVE_VERIFICATION_DELAY_MS = 12_000;
+  const pendingInactiveReportsRef = useRef(new Map()); // streamId -> { timerId, snapshotTime }
+
+  const cancelPendingInactiveReport = useCallback((streamId) => {
+    const entry = pendingInactiveReportsRef.current.get(streamId);
+    if (!entry) return;
+    clearTimeout(entry.timerId);
+    pendingInactiveReportsRef.current.delete(streamId);
+  }, []);
+
   const reportStreamInactive = useCallback(async (streamId, reason = 'ended') => {
     if (!sessionId || sessionRef.current?.status === 'ended') return;
     if (autoInactiveReportsRef.current.has(streamId)) return;
+    if (pendingInactiveReportsRef.current.has(streamId)) return;
     const stream = streamsRef.current.find((s) => s.id === streamId);
     if (!stream) return;
     const canReport = isHost || stream.user_id === user?.id;
     if (!canReport) return;
-    autoInactiveReportsRef.current.add(streamId);
-    try {
-      const token = await getAccessToken();
-      const res = await fetch(`/api/sessions/${sessionId}/streams/${streamId}/auto-inactive`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token && { Authorization: `Bearer ${token}` }) },
-        body: JSON.stringify({ reason }),
-      });
-      if (!res.ok) throw new Error(`Auto-inactive failed (${res.status})`);
-      const payload = await res.json().catch(() => ({}));
-      if (payload?.promotedAnchorStreamId) setAnchorDeadBanner(false);
-    } catch (err) {
-      console.error('[SessionRoom] Auto-inactive failed:', err);
-      autoInactiveReportsRef.current.delete(streamId);
-    }
+
+    // Snapshot the current player time. After the delay, if the player has
+    // resumed playing or the time has advanced past this snapshot, we treat the
+    // ENDED/ERROR event as transient and cancel the archive.
+    let snapshotTime = 0;
+    try { snapshotTime = playerRefs.current[streamId]?.getCurrentTime?.() ?? 0; } catch (_) {}
+
+    const timerId = setTimeout(async () => {
+      pendingInactiveReportsRef.current.delete(streamId);
+      // Re-check session state after the delay
+      if (sessionRef.current?.status === 'ended') return;
+      const currentStream = streamsRef.current.find((s) => s.id === streamId);
+      if (!currentStream || currentStream.is_active === false) return; // already archived
+
+      // Re-check player state — if recovered, do nothing
+      try {
+        const player = playerRefs.current[streamId];
+        const YT = window.YT;
+        if (player && YT) {
+          const state = player.getPlayerState?.();
+          const t = player.getCurrentTime?.() ?? 0;
+          const recovered = state === YT.PlayerState.PLAYING
+            || state === YT.PlayerState.PAUSED
+            || state === YT.PlayerState.BUFFERING
+            || (Number.isFinite(t) && t > snapshotTime + 0.5);
+          if (recovered) {
+            console.log(`[SessionRoom] Inactive report cancelled for ${streamId.slice(0,8)} — player recovered (${reason})`);
+            return;
+          }
+        }
+      } catch (_) {}
+
+      autoInactiveReportsRef.current.add(streamId);
+      try {
+        const token = await getAccessToken();
+        const res = await fetch(`/api/sessions/${sessionId}/streams/${streamId}/auto-inactive`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(token && { Authorization: `Bearer ${token}` }) },
+          body: JSON.stringify({ reason }),
+        });
+        if (!res.ok) {
+          // 409 = server-side YouTube API verification said the broadcast is still live
+          if (res.status === 409) {
+            console.log(`[SessionRoom] Server refused archive for ${streamId.slice(0,8)} — broadcast still live`);
+            autoInactiveReportsRef.current.delete(streamId);
+            return;
+          }
+          throw new Error(`Auto-inactive failed (${res.status})`);
+        }
+        const payload = await res.json().catch(() => ({}));
+        if (payload?.promotedAnchorStreamId) setAnchorDeadBanner(false);
+      } catch (err) {
+        console.error('[SessionRoom] Auto-inactive failed:', err);
+        autoInactiveReportsRef.current.delete(streamId);
+      }
+    }, INACTIVE_VERIFICATION_DELAY_MS);
+
+    pendingInactiveReportsRef.current.set(streamId, { timerId, snapshotTime });
+    console.log(`[SessionRoom] Inactive report scheduled for ${streamId.slice(0,8)} in ${INACTIVE_VERIFICATION_DELAY_MS}ms (reason=${reason})`);
   }, [getAccessToken, isHost, sessionId, user?.id]);
 
   const handlePlayerReady = useCallback((streamId, player) => {
@@ -789,6 +849,9 @@ export default function SessionRoom({ role, session, streams, onStreamsChange, o
       return;
     }
     if (state !== YT.PlayerState.PAUSED && state !== YT.PlayerState.PLAYING) return;
+    // If we had scheduled an inactive report for this stream, the player is
+    // back — cancel it.
+    cancelPendingInactiveReport(streamId);
     const playing = state === YT.PlayerState.PLAYING;
     syncingRef.current = true;
     if (isAnchor) {
@@ -802,13 +865,27 @@ export default function SessionRoom({ role, session, streams, onStreamsChange, o
       if (film) { try { playing ? film.playVideo() : film.pauseVideo(); } catch (_) {} }
     }
     syncingRef.current = false;
-  }, [isSpectator, reportStreamInactive]);
+  }, [isSpectator, reportStreamInactive, cancelPendingInactiveReport]);
 
   const handleStageError = useCallback((streamId, errorCode) => {
     if (sessionRef.current?.status === 'ended' || isSpectator) return;
     // Twitch fires ENDED via the error callback path — treat it like YouTube's ENDED state.
+    // Both go through the verification-delay flow so transient blips don't archive.
     if (errorCode === 'ENDED') {
       reportStreamInactive(streamId, 'twitch-ended');
+      return;
+    }
+    // YouTube IFrame error codes:
+    //   2   = invalid parameter (transient — ad transition / bad request)
+    //   5   = HTML5 player error (transient — retry usually fixes)
+    //   100 = video removed / private (definitive)
+    //   101 = embed disallowed by owner (definitive)
+    //   150 = same as 101 in disguise (definitive)
+    // Only the definitive codes should trigger an archive. Log everything else.
+    const code = Number(errorCode);
+    const definitive = code === 100 || code === 101 || code === 150;
+    if (!definitive) {
+      console.warn(`[SessionRoom] Transient player error for ${streamId.slice(0,8)}: ${errorCode} — not archiving`);
       return;
     }
     reportStreamInactive(streamId, `player-error:${String(errorCode)}`);
