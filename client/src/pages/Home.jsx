@@ -6,6 +6,8 @@ import { supabase } from '../lib/supabase';
 import SessionResumeCard from '../components/SessionResumeCard';
 import FollowButton from '../components/FollowButton';
 import HomeSkeleton from '../components/HomeSkeleton';
+import heroBg from '../assets/purplebackground.webm';
+import heroBgMp4 from '../assets/purplebackground.mp4';
 import {
   fetchFollowLists,
   fetchProfileSessions,
@@ -308,6 +310,20 @@ export default function Home() {
       <div className="min-h-[calc(100vh-3.5rem)] flex flex-col">
         {/* Hero — left-aligned, two-column feel */}
         <div className="flex-1 flex items-center relative overflow-hidden">
+          {/* Background video */}
+          <video
+            autoPlay
+            loop
+            muted
+            playsInline
+            className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+            aria-hidden="true"
+          >
+            <source src={heroBg} type="video/webm" />
+            <source src={heroBgMp4} type="video/mp4" />
+          </video>
+          {/* Dark overlay so text stays readable */}
+          <div className="absolute inset-0 bg-pov-bg/70 pointer-events-none" />
           {/* Accent glow blobs */}
           <div className="absolute top-1/4 right-1/4 w-[600px] h-[600px] bg-pov-accent/[0.06] rounded-full blur-[150px] pointer-events-none" />
           <div className="absolute bottom-1/4 left-1/3 w-[400px] h-[400px] bg-pov-success/[0.04] rounded-full blur-[120px] pointer-events-none" />
