@@ -60,9 +60,19 @@ const apiRateLimit = createExpressRateLimit({
 // Middleware
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
+  // X-Frame-Options is intentionally omitted — frame-ancestors in CSP takes
+  // precedence in modern browsers and allows controlled embedding.
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+
+  // Build frame-ancestors: always allow self; also allow any origins listed in
+  // ALLOWED_FRAME_ANCESTORS (comma-separated, e.g. "https://mysite.com,https://other.com")
+  const extraAncestors = (process.env.ALLOWED_FRAME_ANCESTORS || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  const frameAncestors = ["'self'", ...extraAncestors].join(' ');
+
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline' https://www.youtube.com https://player.twitch.tv https://static.twitchcdn.net",
@@ -73,6 +83,7 @@ app.use((req, res, next) => {
     "font-src 'self'",
     "object-src 'none'",
     "base-uri 'self'",
+    `frame-ancestors ${frameAncestors}`,
   ].join('; '));
   if (process.env.NODE_ENV === 'production') {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
