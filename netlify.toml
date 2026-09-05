@@ -1,0 +1,87 @@
+# POV Sync — Netlify configuration
+#
+# Layout on Netlify:
+#   client/dist                     → static site (CDN)
+#   netlify/functions/api.mjs       → the Express API, reached via the /api/* rewrite
+#   netlify/edge-functions/og-meta  → per-session link previews for /watch and /room
+#
+# Everything that used to need a long-lived process (the WebSocket relay and the
+# in-memory sync manager) now runs on Supabase Realtime + client-side offset math,
+# so there is no always-on server to deploy.
+
+[build]
+  command = "npm run build"
+  publish = "client/dist"
+  functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "22"
+  # Workspaces are only installed at the repo root; keep npm from pruning the
+  # client's build-time devDependencies.
+  NPM_FLAGS = "--include=dev"
+
+[functions]
+  node_bundler = "esbuild"
+
+# ── Routing ───────────────────────────────────────────────────────────────────
+# The API rewrite must be declared before the SPA catch-all: Netlify applies the
+# first matching rule.
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+  force = true
+
+# React Router owns every other path.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# ── Headers ───────────────────────────────────────────────────────────────────
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains"
+    # X-Frame-Options is deliberately omitted — frame-ancestors below takes
+    # precedence in modern browsers and allows controlled embedding. To let
+    # another origin embed the app, add it to frame-ancestors here.
+    Content-Security-Policy = """\
+default-src 'self'; \
+script-src 'self' 'unsafe-inline' https://www.youtube.com https://s.ytimg.com https://player.twitch.tv https://embed.twitch.tv https://static.twitchcdn.net; \
+style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; \
+font-src 'self' https://fonts.gstatic.com data:; \
+frame-src https://www.youtube.com https://www.youtube-nocookie.com https://player.twitch.tv; \
+img-src 'self' data: https: blob:; \
+media-src 'self' blob:; \
+connect-src 'self' https://*.supabase.co wss://*.supabase.co; \
+object-src 'none'; \
+base-uri 'self'; \
+frame-ancestors 'self'"""
+
+# Vite fingerprints everything under /assets, so it can be cached indefinitely.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+# ── Local development ─────────────────────────────────────────────────────────
+# `netlify dev` serves the Vite dev server and runs the function + edge function
+# exactly as they run in production.
+
+[dev]
+  command = "npm run dev:client"
+  targetPort = 5173
+  port = 8888
+  publish = "client/dist"
+  autoLaunch = false

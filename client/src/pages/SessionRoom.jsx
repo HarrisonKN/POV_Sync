@@ -110,9 +110,10 @@ export default function SessionRoom({ role, session, streams, onStreamsChange, o
     (streams || []).forEach((s) => { m[s.id] = s.offset_seconds ?? 0; });
     return m;
   });
-  const [syncStats, setSyncStats] = useState(null);
-  const [controlHolderUserId, setControlHolderUserId] = useState(null);
-  const [anchorDeadBanner, setAnchorDeadBanner] = useState(false);
+  // Bumped whenever localStartTimesRef gains a value, so the derived sync
+  // offsets below recompute (a ref alone can't trigger that).
+  const [startTimesVersion, setStartTimesVersion] = useState(0);
+  const [anchorBannerDismissed, setAnchorBannerDismissed] = useState(false);
   const [pendingLatestAnchorId, setPendingLatestAnchorId] = useState(null);
   const [applyingLatestBaseline, setApplyingLatestBaseline] = useState(false);
 
@@ -130,18 +131,14 @@ export default function SessionRoom({ role, session, streams, onStreamsChange, o
   // Ref to saveOffset so handleStageStateChange can call it without a forward-reference dep
   const saveOffsetRef = useRef(null);
   const saveTimers = useRef({});
-  const wsRef = useRef(null);
-  const wsStartTimesRef = useRef(new Set());
   const persistedStartTimesRef = useRef(new Set());
   const persistingStartTimesRef = useRef(new Set());
   // Maps streamId → synthetic start time (Unix s) computed at runtime
   const localStartTimesRef = useRef({});
-  const registeredStreamsRef = useRef(new Set());
   const cycleHideTimerRef = useRef(null);
   const cycleTouchStartRef = useRef(null);
   const autoInactiveReportsRef = useRef(new Set());
   const sessionRef = useRef(session);
-  const endingRef = useRef(false);
   // spectator: tracks which stream the user has manually jumped to
   const localOverrideStreamIdRef = useRef(null);
   // Tracks the last time WE programmatically seeked the anchor (e.g. Go Live).
@@ -149,7 +146,6 @@ export default function SessionRoom({ role, session, streams, onStreamsChange, o
   const anchorProgrammaticSeekTs = useRef(0);
 
   useEffect(() => { sessionRef.current = session; }, [session]);
-  useEffect(() => { endingRef.current = ending; }, [ending]);
 
   // ── Sync offsets/streams into refs ─────────────────────────────────────────
   // During a live session, keep finished (is_active=false) streams visible so
@@ -181,11 +177,14 @@ export default function SessionRoom({ role, session, streams, onStreamsChange, o
       return next;
     });
     // Seed localStartTimesRef from DB so getUtcTimeLabel & handleSyncToUtc work immediately
+    let seededStartTime = false;
     streams.forEach((s) => {
       if (Number.isFinite(s.youtube_start_time) && s.youtube_start_time > 0 && !localStartTimesRef.current[s.id]) {
         localStartTimesRef.current[s.id] = s.youtube_start_time;
+        seededStartTime = true;
       }
     });
+    if (seededStartTime) setStartTimesVersion((v) => v + 1);
     console.log('[Init] Stream start times from DB:', streams.map(s => `${s.display_name}: youtube_start_time=${s.youtube_start_time ?? 'null'} offset=${s.offset_seconds ?? 'null'}`).join(', '));
   }, [streams]);
 
@@ -204,6 +203,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange, o
           data.updated.forEach(({ streamId, startTime }) => {
             localStartTimesRef.current[streamId] = startTime;
           });
+          setStartTimesVersion((v) => v + 1);
           // Update stream objects so getUtcTimeLabel picks them up
           onStreamsChange?.((prev) => prev.map((s) => {
             const match = data.updated.find((u) => u.streamId === s.id);
@@ -217,6 +217,9 @@ export default function SessionRoom({ role, session, streams, onStreamsChange, o
   }, [isVod, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Derived display values ──────────────────────────────────────────────────
+  // Control delegation lives on the session row, so it survives reloads and
+  // arrives at every client through the existing realtime subscription.
+  const controlHolderUserId = session?.control_delegate_id ?? null;
   const hasControl = isHost || (!!controlHolderUserId && user?.id === controlHolderUserId);
   const canAddPov = isHost && !isVod && activeStreamCount < MAX_STREAMS_MVP;
   const nextPovLabel = `POV ${activeStreamCount + 1}`;
@@ -247,13 +250,81 @@ export default function SessionRoom({ role, session, streams, onStreamsChange, o
   const cycleHoverStream = visibleStreams.find((s) => s.id === cycleHoverStreamId) ?? null;
   const cycleInfoStream = cycleHoverStream ?? visibleStreams[cycleActiveIndex] ?? visibleStreams[0] ?? null;
 
-  const effectiveSyncStats = syncStats ?? (visibleStreams.length > 0 ? {
-    offsets: Object.fromEntries(visibleStreams.map((s) => [s.id, s.offset_seconds ?? 0])),
-    confidence: Object.fromEntries(visibleStreams.map((s) => [s.id, 0])),
-    startTimesAvailable: Object.fromEntries(visibleStreams.map((s) => [s.id, Boolean(s.youtube_start_time)])),
-    anchorStreamId: anchorStream?.id ?? null,
-    timestamp: null,
-  } : null);
+  // ── Sync offsets ────────────────────────────────────────────────────────────
+  // These used to be computed by a stateful sync server and pushed over a
+  // WebSocket every 4s. Both inputs — each stream's UTC start time and which
+  // stream is the anchor — live on the `streams` rows that every client already
+  // receives over Supabase realtime, so each client now derives the same numbers
+  // locally with the identical formula: offset = streamStart - anchorStart.
+  const syncStats = useMemo(() => {
+    if (visibleStreams.length === 0) return null;
+
+    const startTimeFor = (stream) => {
+      const local = localStartTimesRef.current[stream.id];
+      if (Number.isFinite(local) && local > 0) return local;
+      const persisted = stream.youtube_start_time;
+      return Number.isFinite(persisted) && persisted > 0 ? persisted : null;
+    };
+
+    const anchor = visibleStreams.find((s) => s.is_anchor) ?? null;
+    const anchorStartTime = anchor ? startTimeFor(anchor) : null;
+
+    const offsets = {};
+    const confidence = {};
+    const startTimesAvailable = {};
+
+    visibleStreams.forEach((stream) => {
+      const startTime = startTimeFor(stream);
+      startTimesAvailable[stream.id] = startTime !== null;
+
+      if (anchor && stream.id === anchor.id) {
+        offsets[stream.id] = 0;
+        confidence[stream.id] = 1;
+      } else if (anchorStartTime !== null && startTime !== null) {
+        offsets[stream.id] = Math.round((startTime - anchorStartTime) * 100) / 100;
+        confidence[stream.id] = 1;
+      } else {
+        offsets[stream.id] = stream.offset_seconds ?? null;
+        confidence[stream.id] = 0;
+      }
+    });
+
+    return {
+      offsets,
+      confidence,
+      startTimesAvailable,
+      anchorStreamId: anchor?.id ?? null,
+      anchorRemoved: !anchor,
+      timestamp: Date.now(),
+    };
+    // startTimesVersion is the invalidation signal for localStartTimesRef.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleStreams, startTimesVersion]);
+
+  // Apply confidently-derived offsets to the players. Skipped for VODs, where
+  // the viewer owns the offsets and a recompute would undo their adjustments.
+  useEffect(() => {
+    if (isVod || !syncStats) return;
+    setOffsets((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const [streamId, offset] of Object.entries(syncStats.offsets)) {
+        if (offset === null || syncStats.confidence[streamId] !== 1) continue;
+        if (next[streamId] == null || Math.abs(next[streamId] - offset) > 0.05) {
+          next[streamId] = offset;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [isVod, syncStats]);
+
+  // A live room whose anchor left has no baseline until the host picks a new one.
+  const anchorMissing = !isVod && visibleStreams.length > 0 && !anchorStream;
+  const anchorDeadBanner = anchorMissing && !anchorBannerDismissed;
+  useEffect(() => {
+    if (!anchorMissing) setAnchorBannerDismissed(false);
+  }, [anchorMissing]);
 
   // ── Persist tile width ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -322,173 +393,6 @@ export default function SessionRoom({ role, session, streams, onStreamsChange, o
     if (!visibleStreams.some((s) => s.id === cycleHoverStreamId)) setCycleHoverStreamId(null);
   }, [cycleHoverStreamId, visibleStreams]);
 
-  // ── WebSocket — participant / host (authenticated) ─────────────────────────
-  useEffect(() => {
-    if (isSpectator || !sessionId || session?.status === 'ended' || ending) return;
-
-    let active = true;
-    let ws = null;
-    let reconnectTimer = null;
-
-    const connect = async () => {
-      if (!active || endingRef.current || sessionRef.current?.status === 'ended') return;
-      const token = await getAccessToken();
-      if (!active || !token) return;
-
-      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsHost = import.meta.env.VITE_WS_URL || `${wsProtocol}//${window.location.host}`;
-      ws = new WebSocket(`${wsHost}/ws?sessionId=${sessionId}&role=participant`);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        console.log('[WS] Connected — sending auth...');
-        // Send token as first message (not in URL) to avoid log/proxy leakage
-        ws.send(JSON.stringify({ type: 'AUTH', token }));
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-
-          // AUTH_OK — server confirmed auth; now register streams
-          if (msg.type === 'AUTH_OK') {
-            console.log('[WS] Authenticated — registering streams');
-            registeredStreamsRef.current.clear();
-            const cur = streamsRef.current;
-            if (cur.length > 0) {
-              ws.send(JSON.stringify({
-                type: 'REGISTER_STREAMS',
-                streams: cur.map((s) => ({ id: s.id, isAnchor: s.is_anchor })),
-              }));
-              cur.forEach((s) => registeredStreamsRef.current.add(s.id));
-            }
-            return;
-          }
-
-          if (msg.type === 'SYNC_OFFSETS') {
-            const { offsets: serverOffsets, confidence, startTimesAvailable, timestamp } = msg;
-            setSyncStats({ offsets: serverOffsets || {}, confidence: confidence || {}, startTimesAvailable: startTimesAvailable || {}, anchorStreamId: msg.anchorStreamId, timestamp });
-            // Debug: log offsets + local start times + UTC positions
-            const debugRows = Object.entries(serverOffsets || {}).map(([sid, off]) => {
-              const st = localStartTimesRef.current[sid];
-              const pt = playerRefs.current[sid]?.getCurrentTime?.() ?? null;
-              const utc = (st && pt != null) ? new Date((st + pt) * 1000).toISOString().substring(11, 19) : 'n/a';
-              return `  ${sid.slice(0,8)} offset=${off != null ? off.toFixed(2) + 's' : 'null'} startTime=${st ?? 'unknown'} playerTime=${pt != null ? pt.toFixed(1) : 'n/a'} UTC=${utc}`;
-            }).join('\n');
-            console.log(`[SYNC_OFFSETS] anchor=${msg.anchorStreamId?.slice(0,8)}\n${debugRows}`);
-            Object.entries(serverOffsets || {}).forEach(([streamId, serverOffset]) => {
-              if (serverOffset == null) return;
-              const stream = streamsRef.current.find((s) => s.id === streamId);
-              if (!stream) return;
-              const cur = typeof stream.offset_seconds === 'number' ? stream.offset_seconds : null;
-              if (cur === null || Math.abs(cur - serverOffset) > 0.05) {
-                setOffsets((prev) => ({ ...prev, [streamId]: serverOffset }));
-              }
-            });
-          } else if (msg.type === 'CONTROL_STATE') {
-            setControlHolderUserId(msg.delegateeUserId ?? null);
-          } else if (msg.type === 'ANCHOR_REMOVED') {
-            setAnchorDeadBanner(true);
-          } else if (msg.type === 'ANCHOR_AUTO_PROMOTED') {
-            setAnchorDeadBanner(false);
-          } else if (msg.type === 'STREAM_REMOVED') {
-            onStreamsChange?.((prev) => prev.map((s) => s.id === msg.streamId ? { ...s, is_active: false } : s));
-          } else if (msg.type === 'STREAM_UPDATED') {
-            onStreamsChange?.((prev) => prev.map((s) => s.id === msg.stream?.id ? { ...s, ...msg.stream } : s));
-          } else if (msg.type === 'SESSION_ENDED') {
-            onSessionEnded?.(msg.endedAt);
-          }
-        } catch (err) {
-          console.error('[WS] Failed to parse message:', err);
-        }
-      };
-
-      ws.onerror = (err) => { console.error('[WS] Error:', err); };
-
-      ws.onclose = () => {
-        if (wsRef.current === ws) wsRef.current = null;
-        if (active && !endingRef.current && sessionRef.current?.status !== 'ended') {
-          console.log('[WS] Reconnecting in 3s…');
-          reconnectTimer = setTimeout(connect, 3000);
-        }
-      };
-    };
-
-    connect();
-
-    return () => {
-      active = false;
-      clearTimeout(reconnectTimer);
-      if (ws?.readyState === WebSocket.OPEN) ws.close();
-      if (wsRef.current === ws) wsRef.current = null;
-    };
-  }, [isSpectator, sessionId, getAccessToken, session?.status, ending, onStreamsChange, onSessionEnded]);
-
-  // ── WebSocket — spectator (unauthenticated, read-only) ─────────────────────
-  useEffect(() => {
-    if (!isSpectator || !sessionId) return;
-
-    let active = true;
-    let reconnectTimer = null;
-
-    function connect() {
-      if (!active) return;
-      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsHost = import.meta.env.VITE_WS_URL || `${wsProtocol}//${window.location.host}`;
-      const ws = new WebSocket(`${wsHost}/ws?sessionId=${sessionId}&role=spectator`);
-      wsRef.current = ws;
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === 'SYNC_OFFSETS') {
-            setSyncStats({ offsets: msg.offsets || {}, confidence: msg.confidence || {}, startTimesAvailable: msg.startTimesAvailable || {}, anchorStreamId: msg.anchorStreamId ?? null, timestamp: msg.timestamp ?? null });
-            setOffsets((prev) => ({ ...prev, ...(msg.offsets || {}) }));
-          } else if (msg.type === 'ANCHOR_REMOVED') {
-            setSyncStats((prev) => ({ ...(prev || {}), anchorRemoved: true }));
-          } else if (msg.type === 'STREAM_REMOVED') {
-            onStreamsChange?.((prev) => prev.map((s) => s.id === msg.streamId ? { ...s, is_active: false } : s));
-          } else if (msg.type === 'STREAM_UPDATED') {
-            onStreamsChange?.((prev) => prev.map((s) => s.id === msg.stream?.id ? { ...s, ...msg.stream } : s));
-          } else if (msg.type === 'SESSION_ENDED') {
-            onSessionEnded?.(msg.endedAt);
-          }
-        } catch (err) {
-          console.error('[WS] Spectator message parse error:', err);
-        }
-      };
-
-      ws.onerror = (err) => { console.error('[WS] Spectator error:', err); };
-
-      ws.onclose = () => {
-        if (wsRef.current === ws) wsRef.current = null;
-        if (active) { reconnectTimer = setTimeout(connect, 3000); }
-      };
-    }
-
-    connect();
-
-    return () => {
-      active = false;
-      clearTimeout(reconnectTimer);
-      if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.close();
-      wsRef.current = null;
-    };
-  }, [isSpectator, sessionId, onStreamsChange, onSessionEnded]);
-
-  // ── Register new streams with WS as they arrive ────────────────────────────
-  useEffect(() => {
-    if (isSpectator) return;
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    const cur = isVod ? streams : (streams || []).filter((s) => s.is_active !== false);
-    if (!cur.length) return;
-    const unregistered = cur.filter((s) => !registeredStreamsRef.current.has(s.id));
-    if (!unregistered.length) return;
-    ws.send(JSON.stringify({ type: 'REGISTER_STREAMS', streams: unregistered.map((s) => ({ id: s.id, isAnchor: s.is_anchor })) }));
-    unregistered.forEach((s) => registeredStreamsRef.current.add(s.id));
-  }, [streams, isVod, isSpectator]);
-
   // ── Sync start-time reporting ──────────────────────────────────────────────
   const reportSyntheticStartTime = useCallback(async (streamId, player, { minPlayerTime = 0 } = {}) => {
     if (!player) return false;
@@ -504,17 +408,14 @@ export default function SessionRoom({ role, session, streams, onStreamsChange, o
     // Only overwrite if we don't already have a YouTube API value from the DB.
     if (!localStartTimesRef.current[streamId]) {
       localStartTimesRef.current[streamId] = syntheticStart;
+      setStartTimesVersion((v) => v + 1);
     }
 
-    // In VOD mode, we only needed the local copy — skip WS and persistence
+    // In VOD mode the local copy is all we needed — skip persistence.
     if (sessionRef.current?.status === 'ended') return true;
 
-    const ws = wsRef.current;
-    if (!wsStartTimesRef.current.has(streamId) && ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'STREAM_START_TIME', streamId, startTime: syntheticStart }));
-      wsStartTimesRef.current.add(streamId);
-    }
-
+    // Persisting to Supabase is what propagates this start time to the other
+    // clients: they pick the row change up over realtime and re-derive offsets.
     if (persistedStartTimesRef.current.has(streamId) || persistingStartTimesRef.current.has(streamId)) return true;
     persistingStartTimesRef.current.add(streamId);
     try {
@@ -539,7 +440,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange, o
     if (isSpectator) return;
     const timerId = setInterval(() => {
       for (const stream of streamsRef.current) {
-        if (wsStartTimesRef.current.has(stream.id) && persistedStartTimesRef.current.has(stream.id)) continue;
+        if (persistedStartTimesRef.current.has(stream.id)) continue;
         const player = playerRefs.current[stream.id];
         if (!player) continue;
         reportSyntheticStartTime(stream.id, player, { minPlayerTime: 10 }).catch(() => {});
@@ -708,8 +609,9 @@ export default function SessionRoom({ role, session, streams, onStreamsChange, o
           }
           throw new Error(`Auto-inactive failed (${res.status})`);
         }
-        const payload = await res.json().catch(() => ({}));
-        if (payload?.promotedAnchorStreamId) setAnchorDeadBanner(false);
+        // An auto-promoted replacement anchor arrives over realtime, which
+        // clears the derived anchor-missing banner on its own.
+        await res.json().catch(() => ({}));
       } catch (err) {
         console.error('[SessionRoom] Auto-inactive failed:', err);
         autoInactiveReportsRef.current.delete(streamId);
@@ -1106,7 +1008,7 @@ export default function SessionRoom({ role, session, streams, onStreamsChange, o
         console.warn(`[UTC Sync] No start time for stream ${stream.id.slice(0,8)} — skipping`);
         return;
       }
-      // offset = streamStart - anchorStart  (same formula as syncManager)
+      // offset = streamStart - anchorStart  (same formula as the derived syncStats above)
       const utcOffset = Math.round((streamStartTime - anchorStartTime) * 100) / 100;
       utcOffsets[stream.id] = utcOffset;
       const target = Math.max(0, anchorUtc - streamStartTime);
@@ -1221,11 +1123,11 @@ export default function SessionRoom({ role, session, streams, onStreamsChange, o
   // ── Pending latest anchor + Go Live ────────────────────────────────────────
   useEffect(() => {
     if (!pendingLatestAnchorId) return;
-    if (effectiveSyncStats?.anchorStreamId !== pendingLatestAnchorId) return;
+    if (syncStats?.anchorStreamId !== pendingLatestAnchorId) return;
     handleGoLive();
     setPendingLatestAnchorId(null);
     setApplyingLatestBaseline(false);
-  }, [effectiveSyncStats?.anchorStreamId, handleGoLive, pendingLatestAnchorId]);
+  }, [syncStats?.anchorStreamId, handleGoLive, pendingLatestAnchorId]);
 
   // ── Delegation ──────────────────────────────────────────────────────────────
   const handleDelegateControl = useCallback(async (delegateeUserId, displayName) => {
@@ -1316,9 +1218,9 @@ export default function SessionRoom({ role, session, streams, onStreamsChange, o
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         });
         if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Failed to end session'); }
-        // Server now broadcasts SESSION_ENDED via WS so participants/spectators
-        // flip to VOD instantly. We also close our own socket here.
-        if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.close(1000, 'session ended');
+        // Flip this client to VOD right away; every other client sees the
+        // status change through its realtime subscription on `sessions`.
+        onSessionEnded?.(new Date().toISOString());
       } catch (err) {
         setModal({ title: 'Error', message: err.message, variant: 'alert', confirmLabel: 'OK' });
       } finally {
@@ -1973,16 +1875,16 @@ export default function SessionRoom({ role, session, streams, onStreamsChange, o
       {anchorDeadBanner && !isVod && (
         <AnchorDeadBanner
           streams={visibleStreams}
-          onPromote={(streamId) => { handlePromoteAnchor(streamId); setAnchorDeadBanner(false); }}
-          onDismiss={() => setAnchorDeadBanner(false)}
+          onPromote={(streamId) => { handlePromoteAnchor(streamId); setAnchorBannerDismissed(true); }}
+          onDismiss={() => setAnchorBannerDismissed(true)}
         />
       )}
 
       {/* Sync Status Panel (host, live) */}
-      {isHost && !isVod && effectiveSyncStats && (
+      {isHost && !isVod && syncStats && (
         <SyncStatusPanel
           streams={visibleStreams}
-          syncStats={effectiveSyncStats}
+          syncStats={syncStats}
           session={session}
           onApplyLatestBaseline={handleSyncToLatestStart}
           applyingLatestBaseline={applyingLatestBaseline}

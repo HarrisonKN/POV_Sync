@@ -4,13 +4,25 @@
   "private": true,
   "type": "module",
   "description": "Multi-POV YouTube stream viewer for gaming squads",
+  "workspaces": [
+    "client",
+    "server"
+  ],
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
-    "dev:client": "cd client && npm run dev",
-    "dev:server": "cd server && npm run dev",
-    "build": "cd client && npm run build",
-    "start": "cd server && npm start",
-    "install:all": "npm install && cd client && npm install && cd ../server && npm install"
+    "dev:client": "npm run dev --workspace client",
+    "dev:server": "npm run dev --workspace server",
+    "dev:netlify": "netlify dev",
+    "build": "npm run build --workspace client",
+    "start": "npm run start --workspace server",
+    "install:all": "npm install"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "serverless-http": "^3.2.0"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",

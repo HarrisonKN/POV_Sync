@@ -66,11 +66,16 @@ CREATE TABLE IF NOT EXISTS public.sessions (
   anchor_stream_id uuid,  -- FK added after streams table exists
   created_at       timestamptz DEFAULT now(),
   ended_at         timestamptz,
-  vod_ready_at     timestamptz   -- Set once the final VOD offsets have been computed
+  vod_ready_at     timestamptz,  -- Set once the final VOD offsets have been computed
+  control_delegate_id uuid REFERENCES public.users(id) ON DELETE SET NULL
+                               -- Participant the host has handed the controls to.
+                               -- Durable (not server memory) so it survives
+                               -- reloads and works on a serverless backend.
 );
 
 ALTER TABLE public.sessions
-  ADD COLUMN IF NOT EXISTS vod_ready_at timestamptz;
+  ADD COLUMN IF NOT EXISTS vod_ready_at timestamptz,
+  ADD COLUMN IF NOT EXISTS control_delegate_id uuid REFERENCES public.users(id) ON DELETE SET NULL;
 
 -- 3. Streams table
 CREATE TABLE IF NOT EXISTS public.streams (

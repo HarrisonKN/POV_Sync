@@ -2,19 +2,41 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+/**
+ * Resolve the .env files to try, relative to this module.
+ *
+ * Wrapped in try/catch because bundlers (esbuild, used by Netlify Functions)
+ * can leave `import.meta.url` pointing somewhere that isn't a real file path.
+ * There are no .env files on a serverless host anyway — the platform injects
+ * the variables directly — so an empty candidate list is a fine outcome.
+ */
+function resolveCandidatePaths() {
+  try {
+    const dir = path.dirname(fileURLToPath(import.meta.url));
+    return [
+      path.resolve(dir, '../../.env'),
+      path.resolve(dir, '../../.env.local'),
+      path.resolve(dir, '../../../.env'),
+      path.resolve(dir, '../../../.env.local'),
+    ];
+  } catch (_) {
+    return [];
+  }
+}
 
-const candidatePaths = [
-  path.resolve(__dirname, '../../.env'),
-  path.resolve(__dirname, '../../.env.local'),
-  path.resolve(__dirname, '../../../.env'),
-  path.resolve(__dirname, '../../../.env.local'),
-];
+const candidatePaths = resolveCandidatePaths();
 
 export function loadServerEnv() {
+  // On Netlify (and any other managed host) the environment is already
+  // populated; reading dotenv files there would only add noise.
+  if (process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME) return;
+
   for (const envPath of candidatePaths) {
-    dotenv.config({ path: envPath, override: false });
+    try {
+      dotenv.config({ path: envPath, override: false, quiet: true });
+    } catch (_) {
+      // A missing or unreadable .env is not an error — env may come from elsewhere.
+    }
   }
 }
 

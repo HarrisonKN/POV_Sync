@@ -4,8 +4,6 @@ import { requireAuth } from '../lib/supabaseAuth.js';
 import { createExpressRateLimit } from '../lib/rateLimit.js';
 import { generateLinkCode, detectPlatform } from '../../../shared/helpers.js';
 import { MAX_STREAMS_MVP } from '../../../shared/constants.js';
-import * as syncManager from '../services/syncManager.js';
-import { broadcastToSession, setControlDelegation } from '../websocket/index.js';
 import { fetchActualStartTime, fetchLiveStreamingDetails } from '../lib/youtubeApi.js';
 
 const router = Router();
@@ -43,6 +41,44 @@ const expensiveSessionActionRateLimit = createExpressRateLimit({
   keyGenerator: userActionKey,
   message: 'Too many expensive session sync actions',
 });
+
+const START_TIME_LOOKUP_TIMEOUT_MS = Number(process.env.YOUTUBE_LOOKUP_TIMEOUT_MS || 3500);
+
+function withTimeout(promise, ms, fallback = null) {
+  let timer;
+  const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(fallback), ms); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Look up a stream's authoritative YouTube start time and persist it.
+ *
+ * Awaited rather than left as a dangling promise on purpose: on a serverless
+ * host the execution context is frozen the instant the response is sent, so
+ * fire-and-forget work after res.json() would silently never run. The lookup is
+ * bounded by a timeout so a slow YouTube API can't stall the request.
+ *
+ * Returns the resolved Unix start time, or null when unavailable.
+ */
+async function persistActualStartTime(streamId, youtubeUrl) {
+  try {
+    const ytStartTime = await withTimeout(fetchActualStartTime(youtubeUrl), START_TIME_LOOKUP_TIMEOUT_MS);
+    if (!ytStartTime) return null;
+
+    const { error } = await supabaseAdmin
+      .from('streams')
+      .update({ youtube_start_time: ytStartTime })
+      .eq('id', streamId);
+
+    if (error) throw error;
+
+    console.log(`[API] YouTube actualStartTime saved for stream ${streamId.slice(0, 8)}: ${ytStartTime}`);
+    return ytStartTime;
+  } catch (err) {
+    console.warn(`[API] Start-time lookup failed for stream ${streamId.slice(0, 8)}:`, err.message);
+    return null;
+  }
+}
 
 async function finalizeSessionEnd(sessionId) {
   const nowIso = new Date().toISOString();
@@ -82,14 +118,8 @@ async function finalizeSessionEnd(sessionId) {
 
   if (updateError) throw updateError;
 
-  syncManager.stopSession(sessionId);
-
-  // Notify all connected clients immediately (don't wait for Supabase realtime)
-  try {
-    broadcastToSession(sessionId, { type: 'SESSION_ENDED', sessionId, endedAt: nowIso });
-  } catch (err) {
-    console.error('[API] Failed to broadcast SESSION_ENDED:', err);
-  }
+  // Clients flip to VOD through their Supabase realtime subscription on
+  // `sessions` (status -> 'ended'), so there is no separate push to make here.
 
   return { endedAt: nowIso, streamCount: allStreams?.length ?? 0 };
 }
@@ -147,8 +177,6 @@ async function archiveStreamAndMaybeFinalizeSession(sessionId, streamId) {
       .eq('id', stream.id);
 
     if (archiveError) throw archiveError;
-
-    syncManager.removeStream(sessionId, stream.id);
   }
 
   let promotedAnchorStreamId = null;
@@ -180,13 +208,6 @@ async function archiveStreamAndMaybeFinalizeSession(sessionId, streamId) {
         .eq('session_id', sessionId);
 
       if (markAnchorError) throw markAnchorError;
-
-      syncManager.promoteAnchor(sessionId, replacementStream.id);
-      broadcastToSession(sessionId, {
-        type: 'ANCHOR_AUTO_PROMOTED',
-        sessionId,
-        streamId: replacementStream.id,
-      });
     } else {
       const { error: clearAnchorError } = await supabaseAdmin
         .from('sessions')
@@ -328,18 +349,7 @@ router.post('/', requireAuth, createSessionRateLimit, async (req, res) => {
     }
     console.log('[API] Session creation complete!');
 
-    // Register stream with sync manager (lightweight — no audio pipeline)
-    syncManager.startSession(session.id, (msg) => broadcastToSession(session.id, msg));
-    syncManager.addStream(session.id, stream.id, primaryStream.youtubeUrl, true);
-
-    // Proactively fetch authoritative start time from YouTube API (non-blocking)
-    fetchActualStartTime(primaryStream.youtubeUrl).then((ytStartTime) => {
-      if (!ytStartTime) return;
-      supabaseAdmin.from('streams').update({ youtube_start_time: ytStartTime }).eq('id', stream.id).then(() => {
-        syncManager.reportStartTime(session.id, stream.id, ytStartTime);
-        console.log(`[API] YouTube actualStartTime saved for anchor stream ${stream.id.slice(0,8)}: ${ytStartTime}`);
-      });
-    }).catch(() => {});
+    const startTimeLookups = [persistActualStartTime(stream.id, primaryStream.youtubeUrl)];
 
     const extraStreams = [];
     for (const entry of incomingStreams.slice(1)) {
@@ -363,14 +373,14 @@ router.post('/', requireAuth, createSessionRateLimit, async (req, res) => {
       }
 
       extraStreams.push(extraStream);
-      syncManager.addStream(session.id, extraStream.id, entry.youtubeUrl, false);
-      fetchActualStartTime(entry.youtubeUrl).then((ytStartTime) => {
-        if (!ytStartTime) return;
-        supabaseAdmin.from('streams').update({ youtube_start_time: ytStartTime }).eq('id', extraStream.id).then(() => {
-          syncManager.reportStartTime(session.id, extraStream.id, ytStartTime);
-        });
-      }).catch(() => {});
+      startTimeLookups.push(persistActualStartTime(extraStream.id, entry.youtubeUrl));
     }
+
+    const startTimeResults = await Promise.allSettled(startTimeLookups);
+    [stream, ...extraStreams].forEach((row, index) => {
+      const result = startTimeResults[index];
+      if (result?.status === 'fulfilled' && result.value) row.youtube_start_time = result.value;
+    });
 
     res.json({
       session: { ...session, anchor_stream_id: stream.id },
@@ -395,7 +405,7 @@ router.get('/room/:code', async (req, res) => {
 
     const { data: session, error } = await supabaseAdmin
       .from('sessions')
-      .select('id, host_id, participant_link, spectator_link, share_link, status, title, streams!streams_session_id_fkey(id, display_name, user_id, youtube_url, youtube_start_time, platform, offset_seconds, is_anchor, is_active)')
+      .select('id, host_id, participant_link, spectator_link, share_link, status, control_delegate_id, title, streams!streams_session_id_fkey(id, display_name, user_id, youtube_url, youtube_start_time, platform, offset_seconds, is_anchor, is_active)')
       .eq('share_link', code)
       .single();
 
@@ -422,7 +432,7 @@ router.get('/join/:code', async (req, res) => {
 
     const { data: session, error } = await supabaseAdmin
       .from('sessions')
-      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, created_at, ended_at, vod_ready_at, title, streams!streams_session_id_fkey(id, display_name, user_id, youtube_url, youtube_start_time, platform, offset_seconds, is_anchor, is_active, joined_at, left_at)')
+      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, control_delegate_id, created_at, ended_at, vod_ready_at, title, streams!streams_session_id_fkey(id, display_name, user_id, youtube_url, youtube_start_time, platform, offset_seconds, is_anchor, is_active, joined_at, left_at)')
       .eq('participant_link', code)
       .single();
 
@@ -448,7 +458,7 @@ router.get('/watch/:code', async (req, res) => {
 
     const { data: session, error } = await supabaseAdmin
       .from('sessions')
-      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, created_at, ended_at, vod_ready_at, title, streams!streams_session_id_fkey(id, display_name, user_id, youtube_url, youtube_start_time, platform, offset_seconds, is_anchor, is_active, joined_at, left_at)')
+      .select('id, host_id, participant_link, spectator_link, status, anchor_stream_id, control_delegate_id, created_at, ended_at, vod_ready_at, title, streams!streams_session_id_fkey(id, display_name, user_id, youtube_url, youtube_start_time, platform, offset_seconds, is_anchor, is_active, joined_at, left_at)')
       .eq('spectator_link', code)
       .single();
 
@@ -529,7 +539,7 @@ router.post('/:id/streams', requireAuth, streamJoinRateLimit, async (req, res) =
     const db = req.supabase;
 
     const insertedStreams = [];
-    syncManager.startSession(id, (msg) => broadcastToSession(id, msg));
+    const startTimeLookups = [];
 
     for (const entry of incomingStreams) {
       const fallbackLabel = `POV ${nextPovIndex + insertedStreams.length}`;
@@ -550,14 +560,14 @@ router.post('/:id/streams', requireAuth, streamJoinRateLimit, async (req, res) =
       if (streamError) throw streamError;
 
       insertedStreams.push(stream);
-      syncManager.addStream(id, stream.id, entry.youtubeUrl, false);
-      fetchActualStartTime(entry.youtubeUrl).then((ytStartTime) => {
-        if (!ytStartTime) return;
-        supabaseAdmin.from('streams').update({ youtube_start_time: ytStartTime }).eq('id', stream.id).then(() => {
-          syncManager.reportStartTime(id, stream.id, ytStartTime);
-        });
-      }).catch(() => {});
+      startTimeLookups.push(persistActualStartTime(stream.id, entry.youtubeUrl));
     }
+
+    const startTimeResults = await Promise.allSettled(startTimeLookups);
+    insertedStreams.forEach((row, index) => {
+      const result = startTimeResults[index];
+      if (result?.status === 'fulfilled' && result.value) row.youtube_start_time = result.value;
+    });
 
     res.json({ stream: insertedStreams[0], streams: insertedStreams });
   } catch (err) {
@@ -614,9 +624,6 @@ router.post('/:id/promote-anchor', requireAuth, sessionMutationRateLimit, async 
       .from('sessions')
       .update({ anchor_stream_id: streamId })
       .eq('id', id);
-
-    // Tell sync manager
-    syncManager.promoteAnchor(id, streamId);
 
     res.json({ success: true, newAnchorStreamId: streamId });
   } catch (err) {
@@ -683,8 +690,6 @@ router.post('/:id/sync-to-latest', requireAuth, expensiveSessionActionRateLimit,
         .eq('id', id);
 
       if (sessionUpdateError) throw sessionUpdateError;
-
-      syncManager.promoteAnchor(id, latestStream.id);
     }
 
     res.json({
@@ -733,9 +738,6 @@ router.patch('/:id/streams/:streamId/start-time', requireAuth, sessionMutationRa
       .eq('session_id', id);
 
     if (error) throw error;
-
-    // Tell syncManager about the resolved time immediately
-    syncManager.reportStartTime(id, streamId, resolvedStartTime);
 
     res.json({ success: true, startTime: resolvedStartTime, source: resolvedStartTime !== startTime ? 'youtube-api' : 'synthetic' });
   } catch (err) {
@@ -924,9 +926,6 @@ router.post('/:id/leave', requireAuth, sessionMutationRateLimit, async (req, res
 
     if (archiveError) throw archiveError;
 
-    // Remove from sync manager
-    syncManager.removeStream(id, stream.id);
-
     const autoEnd = await autoEndSessionIfNoActiveStreams(id);
 
     res.json({ success: true, archivedStreamId: stream.id, sessionEnded: autoEnd.ended === true });
@@ -1003,8 +1002,15 @@ router.post('/:id/delegate', requireAuth, sessionMutationRateLimit, async (req, 
       return res.status(404).json({ error: 'Delegatee is not a participant in this session' });
     }
 
-    // Set in WS layer and broadcast CONTROL_STATE
-    setControlDelegation(id, session.host_id, delegateeUserId);
+    // Persisted on the session row rather than held in process memory: every
+    // client already subscribes to `sessions` updates, and a late joiner reads
+    // the current holder off the row instead of needing a replayed event.
+    const { error: delegateError } = await supabaseAdmin
+      .from('sessions')
+      .update({ control_delegate_id: delegateeUserId })
+      .eq('id', id);
+
+    if (delegateError) throw delegateError;
 
     res.json({ success: true, delegateeUserId });
   } catch (err) {
@@ -1062,11 +1068,6 @@ router.delete('/:id/streams/:streamId', requireAuth, sessionMutationRateLimit, a
 
     if (updateError) throw updateError;
 
-    syncManager.removeStream(id, streamId);
-
-    // Broadcast to all connected clients so their filmstrips update immediately
-    broadcastToSession(id, { type: 'STREAM_REMOVED', streamId });
-
     const autoEnd = await autoEndSessionIfNoActiveStreams(id);
 
     res.json({ success: true, removedStreamId: streamId, sessionEnded: autoEnd.ended === true });
@@ -1105,9 +1106,6 @@ router.patch('/:id/streams/:streamId/reactivate', requireAuth, sessionMutationRa
       .from('streams')
       .update({ is_active: true, left_at: null })
       .eq('id', streamId);
-
-    syncManager.addStream(id, streamId, stream.youtube_url, false);
-    broadcastToSession(id, { type: 'STREAM_UPDATED', stream: { id: streamId, is_active: true, left_at: null } });
 
     res.json({ success: true, streamId });
   } catch (err) {
@@ -1161,19 +1159,9 @@ router.patch('/:id/streams/:streamId/url', requireAuth, sessionMutationRateLimit
 
     if (updateError) throw updateError;
 
-    // Purge any cached start time for this stream in the in-memory sync manager,
-    // then re-add it with the new URL so the next start-time report wins.
-    syncManager.removeStream(id, streamId);
-    syncManager.addStream(id, streamId, url, false);
-    broadcastToSession(id, { type: 'STREAM_UPDATED', stream: updatedStream });
-
-    // Re-fetch authoritative start time from the YouTube API in the background.
-    fetchActualStartTime(url).then((ytStartTime) => {
-      if (!ytStartTime) return;
-      supabaseAdmin.from('streams').update({ youtube_start_time: ytStartTime }).eq('id', streamId).then(() => {
-        syncManager.reportStartTime(id, streamId, ytStartTime);
-      });
-    }).catch(() => {});
+    // Replacing the video invalidates the old start time — re-resolve it now.
+    const replacementStartTime = await persistActualStartTime(streamId, url);
+    if (replacementStartTime) updatedStream.youtube_start_time = replacementStartTime;
 
     res.json({ success: true, stream: updatedStream });
   } catch (err) {
@@ -1202,7 +1190,12 @@ router.post('/:id/revoke-control', requireAuth, sessionMutationRateLimit, async 
       return res.status(403).json({ error: 'Only the host can revoke control' });
     }
 
-    setControlDelegation(id, session.host_id, null);
+    const { error: revokeError } = await supabaseAdmin
+      .from('sessions')
+      .update({ control_delegate_id: null })
+      .eq('id', id);
+
+    if (revokeError) throw revokeError;
 
     res.json({ success: true });
   } catch (err) {

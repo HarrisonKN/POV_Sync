@@ -96,7 +96,7 @@ export default function SyncStatusPanel({
           )}
           {secAgo !== null && (
             <span className="text-[9px] sm:text-[10px] font-mono text-pov-muted/50 hidden sm:inline">
-              updated {secAgo}s ago
+              recalculated {secAgo}s ago
             </span>
           )}
         </div>
