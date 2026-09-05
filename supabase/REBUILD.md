@@ -30,6 +30,14 @@ realtime publication. It is idempotent — safe to run again.
 > `rebuild.sql` replaces `schema.sql` **and** every `2026*.sql` migration.
 > Do not run the old files as well; they are kept only for history.
 
+### Already have a project?
+
+`rebuild.sql` is idempotent, so re-running the current version is the simplest
+way to pick up later changes — including `sessions.control_delegate_id`, which
+the Netlify migration added. If you'd rather apply just that one change, run
+[20260905_control_delegation.sql](20260905_control_delegation.sql) instead.
+Either is sufficient; don't do both.
+
 ### Verify it worked
 
 New query → paste [supabase/verify.sql](verify.sql) → Run.
@@ -53,16 +61,20 @@ The app only uses **Google OAuth** (`signInWithOAuth({ provider: 'google' })` in
 3. **APIs & Services → Credentials → Create Credentials → OAuth client ID**
    - Application type: **Web application**
    - Name: `POV Sync Supabase`
-   - **Authorized JavaScript origins:**
-     ```
-     http://localhost:5173
-     https://pov-sync.onrender.com
-     ```
-   - **Authorized redirect URIs** — this must be your *Supabase* callback,
-     not your app URL. Copy it from Supabase (Step 3b shows it), it looks like:
+   - **Authorized JavaScript origins:** leave empty. `signInWithOAuth` does a
+     top-level redirect to Supabase, which then redirects to Google — the
+     browser never calls Google from your origin, so this field does not apply.
+     (Filling it in is harmless, just unnecessary.)
+   - **Authorized redirect URIs** — the one field that matters. It must be your
+     *Supabase* callback, **including the `/auth/v1/callback` path** — not your
+     app URL, and not the bare Supabase origin:
      ```
      https://<YOUR-PROJECT-REF>.supabase.co/auth/v1/callback
      ```
+     Copy it verbatim from Supabase → Authentication → Sign In / Providers →
+     Google, where it's shown as **Callback URL (for OAuth)**. Pasting just
+     `https://<ref>.supabase.co` produces `redirect_uri_mismatch` on every
+     sign-in, and a stale `<ref>` from a previous Supabase project does the same.
    - Create → copy the **Client ID** and **Client secret**
 
 ### 3b. Supabase
@@ -79,18 +91,30 @@ Dashboard → **Authentication → URL Configuration**
 
 - **Site URL:**
   ```
-  https://pov-sync.onrender.com
+  https://<your-site>.netlify.app
   ```
   (use `http://localhost:5173` if you're only running locally for now)
 
 - **Redirect URLs** — add all of these. The app passes deep links as
-  `redirectTo` (e.g. `/room/:code`), so wildcards are required:
+  `redirectTo` ([RoleSelect.jsx](../client/src/pages/RoleSelect.jsx#L113) sends
+  `/room/:code`), so the wildcards are required, and the bare origins are needed
+  because `signInWithGoogle()` otherwise passes `window.location.origin` with no
+  trailing slash:
   ```
+  https://<your-site>.netlify.app
+  https://<your-site>.netlify.app/**
   http://localhost:5173
   http://localhost:5173/**
-  https://pov-sync.onrender.com
-  https://pov-sync.onrender.com/**
+  http://localhost:8888
+  http://localhost:8888/**
   ```
+  The `localhost` entries are what make `npm run dev` (5173) and
+  `npm run dev:netlify` (8888) able to sign in — production URLs alone are not
+  enough. Add `https://deploy-preview-*--<your-site>.netlify.app/**` too if you
+  sign in from Netlify deploy previews.
+
+  Leave the Site URL without a trailing slash so it matches the origin the app
+  sends.
 
 Save.
 
@@ -147,7 +171,7 @@ PORT=3002
 YOUTUBE_API_KEY=<keep your existing YouTube Data API v3 key>
 
 # Optional (production)
-# CORS_ORIGINS=https://pov-sync.onrender.com
+# CORS_ORIGINS=https://<your-site>.netlify.app
 # ALLOWED_FRAME_ANCESTORS=
 # API_RATE_LIMIT_MAX=120
 ```
@@ -162,11 +186,13 @@ VITE_SUPABASE_ANON_KEY=<your anon / publishable key>
 > The client gets the anon/publishable key **only** — it's exposed in the browser
 > bundle, which is safe precisely because RLS is on.
 
-### If deployed on Render
+### If deployed on Netlify
 
-Update the same variables in the Render dashboard → your service → **Environment**,
-then redeploy. The static site needs `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`
-set **at build time**.
+Set the same variables in Site configuration → **Environment variables**, then
+trigger a redeploy. Note that `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` are
+inlined into the bundle, so they must be present at **build** time — changing
+them requires a rebuild, not just a restart. See [NETLIFY.md](../NETLIFY.md) for
+the full variable list.
 
 ---
 
@@ -190,13 +216,20 @@ Then walk through this checklist at http://localhost:5173:
 6. **End the session** → status flips to `ended`.
 7. Submit the **feedback modal** → `SELECT * FROM public.feedback_submissions;` shows it.
    *(Message must be 10–1000 chars and contain no `<` or `>` — that's a CHECK constraint.)*
+8. With two accounts in a live room, **delegate controls** from the host to the
+   participant → the participant's window gains the controls without a refresh,
+   and `SELECT id, control_delegate_id FROM public.sessions;` shows their user id.
+   *That confirms realtime on `sessions` works — the app relies on it for
+   delegation now that there is no WebSocket.*
 
 ---
 
 ## What is NOT in Supabase (nothing to restore)
 
 - **No storage buckets.** Avatars come straight from the Google `picture` claim as a URL.
-- **No edge functions.** All server logic is the Express app in [server/src/](../server/src/).
+- **No edge functions.** All server logic is the Express app in [server/src/](../server/src/),
+  served either by `server/src/index.js` or by the Netlify function that wraps it.
+  (`netlify/edge-functions/og-meta.js` runs on Netlify, not on Supabase.)
 - **No database webhooks or cron jobs.**
 - **No secrets stored in Supabase Vault.**
 
@@ -210,11 +243,13 @@ So the SQL in Step 2 plus the auth config in Step 3 is genuinely the whole backe
 |---|---|---|
 | `Missing VITE_SUPABASE_URL...` thrown at startup | `client/.env` not updated, or Vite not restarted | Update it and restart `npm run dev` — Vite only reads env at boot |
 | Login redirects to `localhost:3000` or the site root instead of your deep link | Redirect URL not allow-listed | Add the `/**` wildcard entries in Step 3c |
-| `redirect_uri_mismatch` from Google | Google's redirect URI must be the **Supabase** `/auth/v1/callback`, not your app | Fix in Google Cloud Console (Step 3a) |
+| `redirect_uri_mismatch` from Google | Google's redirect URI is missing the `/auth/v1/callback` path, points at your app instead of Supabase, or carries a `<ref>` from an old Supabase project | Copy the callback verbatim from Supabase → Authentication → Sign In / Providers → Google into Google Cloud Console (Step 3a) |
+| Sign-in works in production but not on `localhost` | `http://localhost:5173/**` missing from the redirect allowlist | Add the localhost entries in Step 3c |
 | Signed in, but the app shows no profile | Signup trigger missing | Re-run `rebuild.sql`; §5 backfills existing auth users |
 | `new row violates row-level security policy` | Server used the anon key where it needs the user's JWT, or key is wrong | Confirm all three keys in `server/.env` are from the new project |
 | `Could not find a relationship ... streams_session_id_fkey` | FK named differently | Re-run `rebuild.sql` — the app's embedded selects depend on that exact constraint name |
 | Participants don't appear until refresh | Realtime publication missing | Re-run `rebuild.sql` §4, or Dashboard → Database → Publications → enable `streams` + `sessions` |
+| Delegated controls never reach the participant | `sessions` missing from the realtime publication, or `control_delegate_id` column missing | Re-run `rebuild.sql`; confirm with checks 2 and 8 of `verify.sql` |
 
 ---
 
